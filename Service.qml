@@ -398,6 +398,7 @@ Item {
   property int playlistItemsSerial: 0
   property int playlistRestoreTargetCount: 0
   property var selectedPlaylist: null
+  property var playlistCheckRequest: null
   property string currentUserId: ""
   property string currentUserName: ""
   readonly property string playlistItemsEmptyMessage: Api.playlistItemsEmptyMessage(
@@ -1595,7 +1596,8 @@ Item {
   // so its refresh uses the same pacing and recovery pause as library work.
   function pageRequest(method, path, query, callback, revalidating) {
     return spotifyApi.request(method, path, query, null, callback,
-      { priority: revalidating === true ? "background" : "interactive" })
+      { priority: revalidating === true ? "background" : "interactive",
+        timeoutMs: Api.API_FOREGROUND_TIMEOUT_MS })
   }
 
   function openView(view, force) {
@@ -1652,11 +1654,7 @@ Item {
     var found = []
     var ask = function(path, query, depth) {
       spotifyApi.request("GET", path, query, null, function(status, payload, error) {
-        if (expected !== root.dataSerial) return
-        if (error) {
-          root.libraryCrawlIncomplete = true
-          return
-        }
+        if (expected !== root.dataSerial || error) return
         var page = Api.normalizePage(payload, root.libraryMapper("playlist"))
         found = found.concat(page.items.filter(Api.isSpotifyPlaylist))
         if (page.next && depth < 40) return ask(page.next, null, depth + 1)
@@ -1746,8 +1744,10 @@ Item {
   function keepIncompleteCollection(kind, cached) {
     var spec = libraryCollectionSpec(kind)
     libraryCrawlIncomplete = true
+    libraryCacheFetchedAt = 0
     var kept = Api.mergeUnique(root[spec.items], cached).slice(0, libraryCacheLimit)
     if (kept.length !== root[spec.items].length) root[spec.items] = kept
+    saveLibraryCache()
   }
 
   function absorbCollectionPage(kind, spec, payload) {
@@ -2412,8 +2412,7 @@ Item {
   function openPlaylist(playlist, restoredItemCount) {
     if (!playlist || !playlist.id) return
     succeed("")
-    playlistItemsSerial++
-    playlistItemsLoading = false
+    stopPlaylistItems()
     playlistRestoreTargetCount = Api.normalizedPlaylistRestoreCount(
       restoredItemCount)
     selectedPlaylist = playlist
@@ -2437,11 +2436,20 @@ Item {
     loadPlaylistItems(false)
   }
 
+  function stopPlaylistItems() {
+    spotifyApi.abortRequest(playlistCheckRequest)
+    playlistCheckRequest = null
+    playlistItemsSerial++
+    playlistItemsLoading = false
+  }
+
   function loadPlaylistItems(append) {
-    if (!selectedPlaylist || !selectedPlaylist.id || playlistItemsLoading) return
+    if (!selectedPlaylist || !selectedPlaylist.id) return
+    if (playlistItemsLoading && !playlistCheckRequest) return
     var path = append ? playlistItemsNext
       : "/playlists/" + encodeURIComponent(String(selectedPlaylist.id)) + "/items"
     if (!path) return
+    if (playlistCheckRequest) stopPlaylistItems()
     var playlistId = String(selectedPlaylist.id)
     var expected = dataSerial
     var requestSerial = playlistItemsSerial
@@ -2449,11 +2457,12 @@ Item {
     var drawn = !append && playlistItems.length > 0
     var checking = drawn && !playlistItemsNext
     playlistItemsLoading = true
-    pageRequest("GET", path, append ? null : { limit: 50 },
+    var handle = pageRequest("GET", path, append ? null : { limit: 50 },
       function(status, payload, error) {
         if (expected !== root.dataSerial) return
         if (requestSerial !== root.playlistItemsSerial) return
         if (!root.selectedPlaylist || String(root.selectedPlaylist.id) !== playlistId) return
+        root.playlistCheckRequest = null
         root.playlistItemsLoading = false
         if (error) {
           root.playlistRestoreTargetCount = 0
@@ -2498,6 +2507,7 @@ Item {
           root.loadPlaylistItems(true)
         else root.playlistRestoreTargetCount = 0
       }, checking)
+    playlistCheckRequest = checking && handle.job ? handle : null
   }
 
   function loadMorePlaylistItems() {
@@ -2680,8 +2690,7 @@ Item {
     var restoredDetailItemCount = detailRememberedItemCount
     if (selectedPlaylist && selectedPlaylist.id === playlist.id) {
       var restoredItemCount = playlistRememberedItemCount
-      playlistItemsSerial++
-      playlistItemsLoading = false
+      stopPlaylistItems()
       playlistRestoreTargetCount = restoredItemCount
       playlistFromCache = false
       playlistItems = []

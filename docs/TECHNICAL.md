@@ -91,7 +91,8 @@ pages already shown in full stand aside for at least a minute, or longer if
 default. Failed background library refreshes preserve the cached collection
 and stop that crawl without replacing the visible action status; a crawl that
 lost pages keeps the cached rows and is not saved as fresh, so it is retried
-next time. Foreground requests, including an explicit Load More, have a
+next time. A cached-page check gives up after the same 15 seconds as an opened
+page, and opening, reloading or loading more replaces it. Foreground requests, including an explicit Load More, have a
 15-second total deadline, including time spent in the queue and retries;
 search keeps its shorter deadline. Expired requests are removed before freed
 slots can send queued commands, so an old Play action cannot execute after

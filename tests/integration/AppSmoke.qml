@@ -49,6 +49,23 @@ ShellRoot {
         throw new Error("A cached page bypassed background pacing")
       spotifyService.api.cancelAll()
       spotifyService.api.rateLimitedUntil = 0
+      spotifyService.api.backgroundSuspendedUntil = Date.now() + 60000
+      spotifyService.selectedPlaylist = { id: "smoke-list" }
+      spotifyService.playlistItems = [{ id: "cached-row" }]
+      spotifyService.playlistItemsNext = ""
+      spotifyService.playlistItemsLoading = false
+      spotifyService.loadPlaylistItems(false)
+      var check = spotifyService.api.requestQueue[0]
+      if (!spotifyService.playlistItemsLoading || !check
+          || check.priority !== "background" || !check.deadlineAt)
+        throw new Error("A cached playlist check was not paced and bounded")
+      spotifyService.playlistItemsNext = "https://api.spotify.com/v1/playlists/smoke-list/items?offset=50&limit=50"
+      spotifyService.loadMorePlaylistItems()
+      if (spotifyService.api.requestQueue.length || spotifyService.playlistItemsLoading)
+        throw new Error("Load More waited behind a paused cached check")
+      if (spotifyService.playlistItems.length !== 1
+          || spotifyService.playlistItems[0].id !== "cached-row")
+        throw new Error("Load More dropped the cached rows")
       spotifyService.api.backgroundSuspendedUntil = 0
       spotifyService.api.lastBackgroundStartedAt = 0
       spotifyService.api.lastInteractiveStartedAt = 0
@@ -90,9 +107,38 @@ ShellRoot {
         throw new Error("A failed offset crawl dropped cached rows: " + ids.join(","))
       if (!spotifyService.savedAlbumsNext)
         throw new Error("A failed offset crawl was marked complete")
-      spotifyService.flushLibraryCache()
-      if (spotifyService.libraryCacheFresh)
-        throw new Error("A failed offset crawl was saved as fresh")
+      spotifyService.libraryCrawlIncomplete = false
+      spotifyService.requestCollectionOffsets("playlists",
+        spotifyService.libraryCollectionSpec("playlists"), [], 0, [])
+      freshnessCheck.start()
+    }
+  }
+  Timer {
+    id: freshnessCheck
+    interval: 100
+    repeat: true
+    property int ticks: 0
+    property bool failed: false
+    onTriggered: {
+      if (++ticks > 60) throw new Error("The library cache never settled")
+      if (!failed) {
+        if (!spotifyService.libraryCacheFresh) return
+        spotifyService.api.lastBackgroundStartedAt = 0
+        spotifyService.api.lastInteractiveStartedAt = 0
+        spotifyService.followedArtists = [{ id: "cached-artist" }]
+        spotifyService.fillSidebarCollection("artists")
+        if (spotifyService.libraryCacheFresh)
+          throw new Error("A late crawl failure left the library marked fresh")
+        failed = true
+        ticks = 0
+        return
+      }
+      if (ticks < 15) return
+      stop()
+      if (spotifyService.libraryCacheFresh || spotifyService.libraryCacheFetchedAt !== 0)
+        throw new Error("A late crawl failure was saved as fresh")
+      if (spotifyService.followedArtists.length !== 1)
+        throw new Error("A late crawl failure dropped cached artists")
       console.log("APP_SMOKE_PASS")
       Qt.quit()
     }
