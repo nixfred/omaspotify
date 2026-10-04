@@ -114,14 +114,17 @@ queued commands, so an old Play action cannot execute after timing out.
 
 Cached playlist pages retain their `snapshotId`. A stale page first requests
 `GET /playlists/{id}?fields=snapshot_id` with revalidation priority. Matching
-versions refresh the cache timestamp without fetching tracks. A newly found
-version is written to the library and detail copies of the playlist as well, so
-reopening it from the sidebar does not mistake the kept rows for outdated ones.
-The refetch starts before that write, so a restore it wakes waits for the new
-first page instead of appending to the old rows. A playlist cut to the 200-row
+versions refresh the cache timestamp without fetching tracks. The open playlist
+is always labelled with the version of the rows on screen, so an edit made
+before replacement rows arrive is sent against the version it was made on. A
+changed or newly known version is published to the open playlist and its
+library entry only after its first page of rows has replaced the old ones, so
+reopening it from the sidebar trusts those rows; a restore it wakes then pages
+on from the new rows. If that refetch fails or expires, the old rows, label and
+stale cache stay, and the next visit checks again. A playlist cut to the 200-row
 cache cap keeps a cursor just after the last kept Spotify position, so Load
-More and deeper restores still reach the rest; pages without known positions
-lose their cursor.
+More and deeper restores still reach the rest, in the opened playlist and in a
+playlist detail page alike; pages without known positions lose their cursor.
 Known mismatches bypass the fresh-cache shortcut, and unknown versions fetch
 content. Metadata
 failures leave the visible rows and stale timestamp intact. Switching pages or

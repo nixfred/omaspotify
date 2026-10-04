@@ -1802,25 +1802,26 @@ Item {
   function updatePlaylistSnapshot(id, snapshotId) {
     if (!id || !snapshotId) return
     forgetCachedPlaylist({ id: String(id) })
-    propagatePlaylistSnapshot(id, snapshotId)
+    publishPlaylistVersion(id, snapshotId)
+    if (detailItem && detailItem.type === "playlist")
+      detailItem = playlistWithVersion(detailItem, id, String(snapshotId))
   }
 
-  // Every copy of the playlist carries the version its kept rows are checked against.
-  function propagatePlaylistSnapshot(id, snapshotId) {
-    var key = String(id || "")
+  function playlistWithVersion(item, id, snapshot) {
+    if (!item || String(item.id || "") !== String(id)) return item
+    var copy = Api.shallowCopy(item)
+    copy.snapshotId = snapshot
+    return copy
+  }
+
+  // The open playlist is labelled with the version of the rows on screen, and
+  // the library learns a version once rows of it have arrived.
+  function publishPlaylistVersion(id, snapshotId) {
     var snapshot = String(snapshotId || "")
-    if (!key || !snapshot) return
-    function updated(item) {
-      if (!item || String(item.id || "") !== key) return item
-      var copy = Api.shallowCopy(item)
-      copy.snapshotId = snapshot
-      return copy
-    }
-    var next = []
-    for (var i = 0; i < playlists.length; i++) next.push(updated(playlists[i]))
-    playlists = next
-    selectedPlaylist = updated(selectedPlaylist)
-    if (detailItem && detailItem.type === "playlist") detailItem = updated(detailItem)
+    if (snapshot) playlists = playlists.map(function(item) {
+      return root.playlistWithVersion(item, id, snapshot)
+    })
+    selectedPlaylist = playlistWithVersion(selectedPlaylist, id, snapshot)
   }
 
   // Rebuilding this array replaces every delegate, so it is coalesced. Library
@@ -2422,11 +2423,14 @@ Item {
     stopPlaylistItems()
     playlistRestoreTargetCount = Api.normalizedPlaylistRestoreCount(
       restoredItemCount)
-    selectedPlaylist = playlist
     playlistItemsError = ""
     playlistItemsStatus = 0
     playlistCacheKey = playlistCacheKeyFor(playlist)
     var kept = pageCache.read(playlistCacheKey)
+    var storedVersion = String(kept && kept.item && kept.item.snapshotId || "")
+    var knownVersion = String(playlist.snapshotId || "")
+    selectedPlaylist = kept ? playlistWithVersion(playlist, playlist.id, storedVersion)
+      : playlist
     playlistItems = kept && Array.isArray(kept.items) ? kept.items : []
     playlistItemsNext = kept ? String(kept.next || "") : ""
     playlistFromCache = !!kept
@@ -2434,8 +2438,6 @@ Item {
     // depth already on screen instead of leaving a shorter list behind.
     playlistRestoreTargetCount = Math.max(playlistRestoreTargetCount,
       playlistItems.length)
-    var storedVersion = String(kept && kept.item && kept.item.snapshotId || "")
-    var knownVersion = String(playlist.snapshotId || "")
     var knownChange = storedVersion && knownVersion && storedVersion !== knownVersion
     if (!knownChange && pageCache.freshness(playlistCacheKey) === "fresh") {
       if (Api.playlistRestoreShouldContinue(playlistItems.length,
@@ -2444,7 +2446,7 @@ Item {
       return
     }
     if (kept && storedVersion && !knownChange) checkPlaylistVersion(kept)
-    else loadPlaylistItems(false)
+    else loadPlaylistItems(false, false, kept ? knownVersion : undefined)
   }
 
   function checkPlaylistVersion(kept) {
@@ -2471,17 +2473,9 @@ Item {
           else root.playlistRestoreTargetCount = 0
           return
         }
-        // No version means we cannot establish freshness. Fetch the rows.
-        // The refetch starts first, so a restore woken by the new version
-        // waits for it instead of paging on from the old rows.
-        root.loadPlaylistItems(false)
-        if (version) {
-          root.propagatePlaylistSnapshot(playlistId, version)
-        } else {
-          var item = Object.assign({}, root.selectedPlaylist)
-          item.snapshotId = ""
-          root.selectedPlaylist = item
-        }
+        // No version means we cannot establish freshness. Fetch the rows; the
+        // version they belong to is published only once they arrive.
+        root.loadPlaylistItems(false, false, version)
       }, true)
     if (handle.job) playlistItemsRequest = handle
   }
@@ -2493,7 +2487,8 @@ Item {
     playlistItemsLoading = false
   }
 
-  function loadPlaylistItems(append, explicit) {
+  // A first page fetched for a checked version publishes it once the rows land.
+  function loadPlaylistItems(append, explicit, checkedVersion) {
     if (!selectedPlaylist || !selectedPlaylist.id) return
     if (explicit !== true && (playlistItemsLoading || playlistItemsRequest)) return
     var path = append ? playlistItemsNext
@@ -2556,6 +2551,8 @@ Item {
             root.playlistRestoreTargetCount, root.playlistItemsNext))
           root.loadPlaylistItems(true)
         else root.playlistRestoreTargetCount = 0
+        if (!append && checkedVersion !== undefined)
+          root.publishPlaylistVersion(playlistId, checkedVersion)
       }, background)
     if (handle.job) playlistItemsRequest = handle
   }
@@ -2838,8 +2835,9 @@ Item {
   function detailPageFromPayload(payload, type, parent) {
     var container = payload || {}
     if (type === "album") container = payload && payload.tracks ? payload.tracks : container
-    else if (type === "playlist")
-      container = payload && (payload.items || payload.tracks) ? (payload.items || payload.tracks) : container
+    // A playlist holds its rows in a page object; a later page is that object itself.
+    else if (type === "playlist" && payload && !Array.isArray(payload.items))
+      container = payload.items || payload.tracks || container
     else if (type === "show") container = payload && payload.episodes ? payload.episodes : container
     else if (type === "audiobook")
       container = payload && payload.chapters ? payload.chapters : container

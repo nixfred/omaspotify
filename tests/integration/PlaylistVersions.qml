@@ -59,14 +59,15 @@ ShellRoot {
       service.api.xhrFactory = function() {
         var xhr = { readyState: 0, status: 0, responseText: "", url: "", aborted: false,
           onreadystatechange: null,
-          open: function(method, url) { this.url = url },
-          send: function() {}, setRequestHeader: function() {},
+          method: "", body: "",
+          open: function(method, url) { this.method = method; this.url = url },
+          send: function(body) { this.body = body || "" }, setRequestHeader: function() {},
           abort: function() { this.aborted = true },
           getResponseHeader: function() { return "30" } }
         test.requests.push(xhr)
         return xhr
       }
-      var names = ["unchanged", "changed", "unknown", "failed", "deep", "large"]
+      var names = ["unchanged", "changed", "unknown", "failed", "deep", "large", "edited"]
       var cache = { version: Api.QUERY_CACHE_VERSION, order: [], entries: {} }
       var entries = []
       for (var i = 0; i < names.length; i++) {
@@ -83,10 +84,18 @@ ShellRoot {
           data = Api.cappedPageSnapshot({ item: data.item,
             items: keptRows("repeat", 250), next: "" }, 200)
         }
+        else if (names[i] === "edited") data.items = keptRows("old-edited", 3)
         cache.entries[key] = { updatedAt: Date.now() - 600000, data: data }
         entries.push({ type: "playlist", id: names[i], name: names[i],
-          uri: "spotify:playlist:" + names[i], snapshotId: "v1" })
+          uri: "spotify:playlist:" + names[i], snapshotId: "v1",
+          collaborative: names[i] === "edited" })
       }
+      var detailKey = Api.queryCacheKey(["detail", "playlist", "detailed", ""])
+      cache.order.push(detailKey)
+      cache.entries[detailKey] = { updatedAt: Date.now(), data: Api.cappedPageSnapshot({
+        item: { kind: "context", type: "playlist", id: "detailed", name: "detailed",
+          uri: "spotify:playlist:detailed", snapshotId: "v1" },
+        items: keptRows("detail-row", 250), next: "" }, 200) }
       service.playlists = entries
       service.queryCacheReady = false
       service.applyQueryCacheFile(JSON.stringify(cache))
@@ -133,7 +142,10 @@ ShellRoot {
       pump()
       expect(requests.length === 4 && last().url.indexOf("/items") >= 0,
         "A known changed version was treated as fresh")
+      expect(service.selectedPlaylist.snapshotId === "v1",
+        "Cached rows were labelled with a version they do not show")
       complete(last(), 200, rows("new-unchanged"))
+      expect(service.selectedPlaylist.snapshotId === "v3", "Fetched rows kept the old label")
 
       // Unknown: no version in the reply means the rows are fetched.
       service.openPlaylist(library("unknown"))
@@ -142,7 +154,9 @@ ShellRoot {
       pump()
       expect(requests.length === 6 && last().url.indexOf("/items") >= 0,
         "An unknown version was trusted")
+      expect(service.selectedPlaylist.snapshotId === "v1", "Kept rows lost their version early")
       complete(last(), 200, rows("new-unknown"))
+      expect(service.selectedPlaylist.snapshotId === "", "Rows of an unknown version kept a label")
       expect(service.playlistItems[0].id === "new-unknown", "Unknown version rows were not replaced")
       expect(library("unknown").snapshotId === "v1", "An unknown version was written to the library")
 
@@ -174,9 +188,12 @@ ShellRoot {
       deep = requestsFor("deep")
       expect(deep.length === 2 && deep[1].url.indexOf("offset=100") < 0
         && deep[1].url.indexOf("/items") >= 0, "The restore paged on from stale rows")
-      expect(library("deep").snapshotId === "v2", "The deep library entry kept the old version")
+      expect(library("deep").snapshotId === "v1" && service.selectedPlaylist.snapshotId === "v1",
+        "The new version was published before its rows arrived")
       complete(deep[1], 200, page("new-deep", 0, 50,
         "https://api.spotify.com/v1/playlists/deep/items?offset=50&limit=50"))
+      expect(library("deep").snapshotId === "v2" && service.selectedPlaylist.snapshotId === "v2",
+        "The fetched version was not published")
       pump()
       complete(requestsFor("deep")[2], 200, page("new-deep", 50, 50,
         "https://api.spotify.com/v1/playlists/deep/items?offset=100&limit=50"))
@@ -215,6 +232,61 @@ ShellRoot {
         "A deeper remembered position was not restored from the capped cache")
       complete(large[2], 200, page("repeat", 200, 50))
       expect(service.playlistItems.length === 250, "The deeper position was not reached")
+
+
+      // Changed, but the rows are slow to come: the old rows keep their own
+      // version for an edit made meanwhile, and a failed or expired refetch
+      // leaves them stale for the next visit.
+      function reads(id) {
+        return requestsFor(id).filter(function(xhr) { return xhr.method === "GET" })
+      }
+      service.openPlaylist(library("edited"))
+      pump()
+      complete(reads("edited")[0], 200, { snapshot_id: "v2" })
+      pump()
+      expect(reads("edited").length === 2, "The changed rows were not requested")
+      service.requestPlaylistItemReorder(0, 2)
+      var edits = requestsFor("edited").filter(function(xhr) { return xhr.method === "PUT" })
+      expect(edits.length === 1 && JSON.parse(edits[0].body).snapshot_id === "v1",
+        "An edit before the new rows arrived was sent against the wrong version")
+      complete(reads("edited")[1], 500, { error: { status: 500, message: "Server error" } })
+      expect(service.selectedPlaylist.snapshotId === "v1" && library("edited").snapshotId === "v1",
+        "A failed refetch published a version it never showed")
+      expect(service.playlistItems.length === 3 && service.playlistItems[0].id === "old-edited",
+        "A failed refetch dropped the kept rows")
+      service.openPlaylist(library("edited"))
+      pump()
+      expect(reads("edited").length === 3 && last().url.indexOf("fields=snapshot_id") >= 0,
+        "A failed refetch left the cache trusted")
+      complete(reads("edited")[2], 200, { snapshot_id: "v2" })
+      pump()
+      service.api.expireTimedOutRequests(Date.now() + Api.API_FOREGROUND_TIMEOUT_MS + 1000)
+      expect(service.selectedPlaylist.snapshotId === "v1" && !service.playlistItemsLoading,
+        "An expired refetch published its version")
+      service.openPlaylist(library("edited"))
+      pump()
+      complete(reads("edited")[4], 200, { snapshot_id: "v2" })
+      pump()
+      complete(reads("edited")[5], 200, rows("new-edited"))
+      expect(service.selectedPlaylist.snapshotId === "v2" && library("edited").snapshotId === "v2"
+        && service.playlistItems[0].id === "new-edited", "The retried refetch was not kept")
+
+      // A capped playlist detail page continues from its kept rows too.
+      service.openDetail({ kind: "context", type: "playlist", id: "detailed",
+        name: "detailed", uri: "spotify:playlist:detailed", snapshotId: "v1" })
+      expect(service.detailItems.length === 200 && service.detailNext.indexOf("offset=200") >= 0,
+        "The capped detail page lost its place")
+      service.loadMoreDetail()
+      pump()
+      var detail = requestsFor("detailed")
+      expect(detail.length === 1 && detail[0].url.indexOf("offset=200") >= 0,
+        "Detail Load More did not resume after the kept rows")
+      complete(detail[0], 200, page("detail-row", 200, 50,
+        "https://api.spotify.com/v1/playlists/detailed/items?offset=250&limit=50"))
+      expect(service.detailItems.length === 250
+        && service.detailItems[249].playlistPosition === 249,
+        "A later playlist detail page was not read")
+      expect(service.detailNext.indexOf("offset=250") >= 0, "Detail paging stopped early")
 
       service.api.cancelAll()
       console.log("PLAYLIST_VERSIONS_PASS")
