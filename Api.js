@@ -255,6 +255,9 @@ function rateLimitMessage(retryAfter) {
 
 var API_MAX_IN_FLIGHT = 4
 var API_MAX_RATE_LIMIT_RETRIES = 4
+var API_FOREGROUND_TIMEOUT_MS = 15000
+// Let the shared budget recover before optional library work starts again.
+var API_BACKGROUND_RECOVERY_MS = 60000
 
 function rateLimitRetryMs(retryAfter, attempt) {
   var value = String(retryAfter || "").trim()

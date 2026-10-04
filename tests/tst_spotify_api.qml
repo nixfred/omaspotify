@@ -666,7 +666,8 @@ TestCase {
     var api = createTemporaryObject(apiComponent, testCase)
     api.rateLimitedUntil = 121000
     var calls = 0
-    api.request("GET", "/me", null, null, function() { calls++ })
+    api.request("GET", "/me", null, null, function() { calls++ },
+      { priority: "background" })
     clock = 120000
     api.expireTimedOutRequests(clock)
     compare(calls, 0)
@@ -678,6 +679,78 @@ TestCase {
     compare(calls, 0)
     complete(requests[0], 200)
     compare(calls, 1)
+  }
+
+  function test_defaultPageDeadlineIncludesRateLimitRetries() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    var errors = []
+    api.request("GET", "/me/albums", null, null,
+      function(status, payload, error) { errors.push(error) })
+    requests[0].retryAfter = "120"
+    complete(requests[0], 429)
+    clock += Api.API_FOREGROUND_TIMEOUT_MS
+    api.expireTimedOutRequests(clock)
+    compare(errors.length, 1, "the page is no longer loading indefinitely")
+    verify(errors[0].indexOf("Spotify is busy") >= 0)
+    compare(api.requestQueue.length, 0)
+    compare(api.timedJobs.length, 0)
+    clock = api.rateLimitedUntil
+    api.pumpRequests()
+    compare(requests.length, 1, "an expired read is never retried later")
+  }
+
+  function test_expiredMutationIsRemovedBeforeSlotsAreReleased() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    var limit = fillEverySlot(api)
+    var errors = []
+    api.request("PUT", "/me/player/play", null, null,
+      function(status, payload, error) { errors.push(error) })
+    clock += Api.API_FOREGROUND_TIMEOUT_MS
+    api.expireTimedOutRequests(clock)
+    compare(errors.length, 1)
+    compare(requests.length, limit, "timed-out Play must not be sent late")
+    compare(api.requestsInFlight, 0)
+    compare(api.requestQueue.length, 0)
+  }
+
+  function test_background429YieldsRecoveryTimeToForeground() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    var errors = []
+    api.request("GET", "/me/albums", null, null,
+      function(status, payload, error) { errors.push(error) },
+      { priority: "background" })
+    api.request("GET", "/me/shows", null, null, function() {},
+      { priority: "background" })
+    complete(requests[0], 429)
+    compare(errors.length, 1, "optional work does not silently retry four times")
+    compare(api.requestQueue.length, 1)
+    clock = api.rateLimitedUntil
+    api.pumpRequests()
+    compare(requests.length, 1, "the next crawl cannot immediately hit the quota again")
+    api.request("GET", "/me/player", null, null, function() {})
+    compare(requests.length, 2, "playback can use the recovered budget")
+    complete(requests[1], 200)
+    api.pumpRequests()
+    compare(requests.length, 2, "a successful poll does not restart the crawl early")
+    clock = api.backgroundSuspendedUntil
+    api.pumpRequests()
+    compare(requests.length, 3, "the crawl resumes after its recovery interval")
+    verify(requests[2].url.indexOf("/me/shows") >= 0)
+  }
+
+  function test_failedProbeDoesNotRestoreFullConcurrency() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.request("GET", "/me", null, null, function() {},
+      { retryRateLimit: false })
+    complete(requests[0], 429)
+    clock = api.rateLimitedUntil
+    api.request("GET", "/me/player", null, null, function() {})
+    api.request("GET", "/me/albums", null, null, function() {})
+    complete(requests[1], 503)
+    verify(api.restrictInFlight, "only a successful response ends recovery mode")
+    compare(api.requestsInFlight, 1)
+    complete(requests[2], 200)
+    verify(!api.restrictInFlight)
   }
 
   function test_quotaExceededDoesNotRetryOrInventCooldown() {

@@ -41,6 +41,26 @@ ShellRoot {
         throw new Error("Search navigation is missing")
       spotifyService.clearSearch()
       if (spotifyService.searchQuery !== "") throw new Error("Search state did not clear")
+      spotifyService.api.cancelAll()
+      spotifyService.api.rateLimitedUntil = Date.now() + 60000
+      var cachedRefresh = spotifyService.pageRequest("GET", "/me/albums", null,
+        function() {}, true)
+      if (!cachedRefresh.job || cachedRefresh.job.priority !== "background")
+        throw new Error("A cached page bypassed background pacing")
+      spotifyService.api.cancelAll()
+      spotifyService.api.rateLimitedUntil = 0
+      spotifyService.api.backgroundSuspendedUntil = 0
+      spotifyService.api.lastBackgroundStartedAt = 0
+      spotifyService.api.lastInteractiveStartedAt = 0
+      spotifyService.lastError = ""
+      spotifyService.savedAlbums = [{ id: "cached-album" }]
+      var crawled = 0
+      spotifyService.loadLibraryCollection("albums", false,
+        function() { crawled++ }, undefined, true)
+      if (spotifyService.savedAlbumsLoading || spotifyService.lastError)
+        throw new Error("A failed optional refresh hid the visible action status")
+      if (crawled || spotifyService.savedAlbums[0].id !== "cached-album")
+        throw new Error("A failed crawl replaced cached data or continued paging")
       console.log("APP_SMOKE_PASS")
       Qt.quit()
     }

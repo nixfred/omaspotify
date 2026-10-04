@@ -1590,13 +1590,11 @@ Item {
   // Fetch only the dataset represented by the visible page. An empty but
   // successfully loaded list is tracked separately so revisiting it causes no
   // network request; the explicit refresh control can still force one.
-  // A page shows nothing at all until these land, so they go ahead of the
-  // queue and get an early try while Spotify is refusing.
-  // A page showing nothing goes ahead of the queue. A page already drawn from
-  // the cache is only being checked, so it takes its turn like anything else.
+  // An empty page goes ahead of the queue. A cached page is already readable,
+  // so its refresh uses the same pacing and recovery pause as library work.
   function pageRequest(method, path, query, callback, revalidating) {
     return spotifyApi.request(method, path, query, null, callback,
-      { priority: revalidating === true ? "" : "interactive" })
+      { priority: revalidating === true ? "background" : "interactive" })
   }
 
   function openView(view, force) {
@@ -2129,8 +2127,10 @@ Item {
       function(status, payload, error) {
         if (expected !== root.dataSerial) return
         root[spec.loading] = false
-        if (error) root.fail(error)
-        else {
+        if (error) {
+          if (background !== true) root.fail(error)
+          if (background === true) return
+        } else {
           var mapper = root.libraryMapper(spec.mapper)
           var page = spec.cursor
             ? Api.normalizeCursorPage(payload && payload.artists, mapper)
@@ -2153,7 +2153,7 @@ Item {
         if (typeof callback === "function")
           callback(payload && payload.total !== undefined ? payload.total
             : (payload && payload.artists ? payload.artists.total : 0))
-      }, background === true ? { priority: "background" } : null)
+      }, { priority: background === true ? "background" : "interactive" })
   }
 
   function loadPlaylists(append, callback, serial) {

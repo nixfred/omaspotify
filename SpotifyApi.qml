@@ -29,6 +29,7 @@ Item {
   property int backgroundInFlight: 0
   property double lastBackgroundStartedAt: 0
   property double lastInteractiveStartedAt: 0
+  property double backgroundSuspendedUntil: 0
   // Every refusal widens the gap between background requests for this run.
   property int backgroundRefusals: 0
   readonly property int backgroundSpacingMs:
@@ -46,6 +47,7 @@ Item {
   property bool restrictInFlight: false
   property bool pumpingRequests: false
   property bool cancellingAll: false
+  property bool expiringRequests: false
   property bool pumpAgain: false
   property var timedJobs: []
   property var diagnostics: []
@@ -124,32 +126,40 @@ Item {
   }
 
   function expireTimedOutRequests(timestamp) {
+    if (expiringRequests) return
     var current = Number(timestamp)
     if (!isFinite(current)) current = now()
     var jobs = timedJobs.slice()
-    for (var i = 0; i < jobs.length; i++) {
-      var job = jobs[i]
-      if (!job || job.finished === true) continue
-      var deadline = job.deadlineAt || job.activeDeadlineAt
-      if (!deadline || current < deadline) continue
-      var handle = job.handle
-      var xhr = handle ? handle.xhr : null
-      var cooldownMs = Api.apiCooldownMs(current, rateLimitedUntil)
-      var waitingForCooldown = cooldownMs > 0 && requestQueue.indexOf(job) >= 0
-      var error = waitingForCooldown
-        ? Api.rateLimitMessage(String(Math.ceil(cooldownMs / 1000)))
-        : "Spotify took too long to respond. Try again."
-      if (String(job.method || "GET") !== "GET" && job.sentAt)
-        error = "Spotify did not confirm this action. Check playback or your collection before retrying."
-      if (markJobFinished(job) !== true) continue
-      if (handle) {
-        handle.xhr = null
-        handle.aborted = true
-        removeQueuedHandle(handle)
+    // Expire the whole batch before releasing slots can dispatch queued work.
+    expiringRequests = true
+    try {
+      for (var i = 0; i < jobs.length; i++) {
+        var job = jobs[i]
+        if (!job || job.finished === true) continue
+        var deadline = job.deadlineAt || job.activeDeadlineAt
+        if (!deadline || current < deadline) continue
+        var handle = job.handle
+        var xhr = handle ? handle.xhr : null
+        var cooldownMs = Api.apiCooldownMs(current, rateLimitedUntil)
+        var waitingForCooldown = cooldownMs > 0 && requestQueue.indexOf(job) >= 0
+        var error = waitingForCooldown
+          ? Api.rateLimitMessage(String(Math.ceil(cooldownMs / 1000)))
+          : "Spotify took too long to respond. Try again."
+        if (String(job.method || "GET") !== "GET" && job.sentAt)
+          error = "Spotify did not confirm this action. Check playback or your collection before retrying."
+        if (markJobFinished(job) !== true) continue
+        if (handle) {
+          handle.xhr = null
+          handle.aborted = true
+          removeQueuedHandle(handle)
+        }
+        abortXhr(xhr)
+        deliverJob(job, 0, null, error, null)
       }
-      abortXhr(xhr)
-      deliverJob(job, 0, null, error, null)
+    } finally {
+      expiringRequests = false
     }
+    pumpRequests()
   }
 
   function abortRequest(handle) {
@@ -198,7 +208,7 @@ Item {
   }
 
   function pumpRequests() {
-    if (cancellingAll) return
+    if (cancellingAll || expiringRequests) return
     if (pumpingRequests) {
       pumpAgain = true
       return
@@ -208,8 +218,10 @@ Item {
     while (requestsInFlight < Api.apiInFlightLimit(restrictInFlight)) {
       var limit = Api.apiInFlightLimit(restrictInFlight)
       var cooldown = Api.apiCooldownMs(now(), rateLimitedUntil)
-      var backgroundDelay = Api.backgroundDispatchDelay(lastBackgroundStartedAt,
-        lastInteractiveStartedAt, now(), backgroundSpacingMs)
+      var backgroundDelay = Math.max(
+        Api.apiCooldownMs(now(), backgroundSuspendedUntil),
+        Api.backgroundDispatchDelay(lastBackgroundStartedAt,
+          lastInteractiveStartedAt, now(), backgroundSpacingMs))
       var allowBackground = cooldown === 0 && backgroundDelay === 0
         && backgroundInFlight < Api.backgroundInFlightLimit(limit)
       var taken = Api.dequeueApiJob(requestQueue, allowBackground)
@@ -316,6 +328,8 @@ Item {
             cooldownProbeUsed = false
             rateLimitedUntil = Api.nextRateLimitedUntil(now(),
               Api.responseRetryAfter(xhr), rateLimitedUntil, job.rateLimitRetries)
+            backgroundSuspendedUntil = Math.max(backgroundSuspendedUntil,
+              rateLimitedUntil, now() + Api.API_BACKGROUND_RECOVERY_MS)
             if (Api.apiJobPriority(job) >= 1)
               interactiveLimitedUntil = Api.nextRateLimitedUntil(now(),
                 Api.responseRetryAfter(xhr), interactiveLimitedUntil,
@@ -334,7 +348,7 @@ Item {
               releaseRequestSlot(handle)
               return
             }
-          } else {
+          } else if (xhr.status >= 200 && xhr.status < 300) {
             restrictInFlight = false
           }
           // Refused by the personal client: try the shipped one, which still
@@ -380,7 +394,13 @@ Item {
   function request(method, path, query, body, callback, options) {
     var settings = options || ({})
     var handle = { aborted: false, xhr: null, job: null }
-    var timeoutMs = Math.max(0, Number(settings.timeoutMs) || 0)
+    var background = Api.apiJobPriority({ method: method,
+      priority: settings.priority }) < 0
+    // Bound the whole wait, including the queue and repeated rate limits.
+    // Optional crawling can wait for recovery without tying up an open page.
+    var timeoutMs = settings.timeoutMs !== undefined
+      ? Math.max(0, Number(settings.timeoutMs) || 0)
+      : (background ? 0 : Api.API_FOREGROUND_TIMEOUT_MS)
     var queuedAt = now()
     var job = {
       method: method,
@@ -392,7 +412,8 @@ Item {
       fellBack: false,
       shared: settings.shared === true,
       rateLimitRetries: 0,
-      retryRateLimit: settings.retryRateLimit !== false,
+      retryRateLimit: settings.retryRateLimit !== undefined
+        ? settings.retryRateLimit === true : !background,
       priority: String(settings.priority || ""),
       timeoutMs: timeoutMs,
       queuedAt: queuedAt,
