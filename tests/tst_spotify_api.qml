@@ -423,11 +423,13 @@ TestCase {
     var api = createTemporaryObject(apiComponent, testCase)
     verify(api)
     var callbacks = 0
-    api.request("GET", "/me", null, null, function() { callbacks++ })
+    api.request("GET", "/me", null, null, function() { callbacks++ },
+      { timeoutMs: 0 })
     requests[0].retryAfter = "120"
     complete(requests[0], 429)
     compare(api.rateLimitedUntil, 121400)
-    api.request("GET", "/me/albums", null, null, function() { callbacks++ })
+    api.request("GET", "/me/albums", null, null, function() { callbacks++ },
+      { timeoutMs: 0 })
 
     clock = 31000
     api.pumpRequests()
@@ -451,7 +453,7 @@ TestCase {
   function test_cooldownLongerThanTimerRangeRechecksWithoutDispatchingEarly() {
     var api = createTemporaryObject(apiComponent, testCase)
     verify(api)
-    api.request("GET", "/me", null, null, function() {})
+    api.request("GET", "/me", null, null, function() {}, { timeoutMs: 0 })
     requests[0].retryAfter = "3000000"
     complete(requests[0], 429)
     var deadline = 3000001400
@@ -738,19 +740,22 @@ TestCase {
     verify(requests[2].url.indexOf("/me/shows") >= 0)
   }
 
-  function test_failedProbeDoesNotRestoreFullConcurrency() {
+  function test_expiredMutationCannotDispatchBetweenWatchdogTicks() {
     var api = createTemporaryObject(apiComponent, testCase)
-    api.request("GET", "/me", null, null, function() {},
-      { retryRateLimit: false })
-    complete(requests[0], 429)
-    clock = api.rateLimitedUntil
-    api.request("GET", "/me/player", null, null, function() {})
-    api.request("GET", "/me/albums", null, null, function() {})
-    complete(requests[1], 503)
-    verify(api.restrictInFlight, "only a successful response ends recovery mode")
-    compare(api.requestsInFlight, 1)
-    complete(requests[2], 200)
-    verify(!api.restrictInFlight)
+    var limit = fillEverySlot(api)
+    var errors = []
+    api.request("PUT", "/me/player/play", null, null,
+      function(status, payload, error) { errors.push(error) },
+      { timeoutMs: 1000 })
+    clock = 2000
+    complete(requests[0], 200)
+    compare(requests.length, limit, "expired Play must not dispatch between watchdog ticks")
+    compare(errors.length, 1)
+    verify(errors[0].indexOf("took too long") >= 0)
+    compare(api.requestsInFlight, limit - 1)
+    compare(api.requestQueue.length, 0)
+    api.expireTimedOutRequests(clock)
+    compare(errors.length, 1, "the expired Play reports once")
   }
 
   function test_quotaExceededDoesNotRetryOrInventCooldown() {

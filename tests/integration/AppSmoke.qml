@@ -54,13 +54,45 @@ ShellRoot {
       spotifyService.api.lastInteractiveStartedAt = 0
       spotifyService.lastError = ""
       spotifyService.savedAlbums = [{ id: "cached-album" }]
-      var crawled = 0
-      spotifyService.loadLibraryCollection("albums", false,
-        function() { crawled++ }, undefined, true)
+      spotifyService.fillSidebarCollection("albums")
       if (spotifyService.savedAlbumsLoading || spotifyService.lastError)
         throw new Error("A failed optional refresh hid the visible action status")
-      if (crawled || spotifyService.savedAlbums[0].id !== "cached-album")
-        throw new Error("A failed crawl replaced cached data or continued paging")
+      if (spotifyService.savedAlbums.length !== 1
+          || spotifyService.savedAlbums[0].id !== "cached-album")
+        throw new Error("A failed crawl replaced cached data")
+      if (!spotifyService.libraryCrawlIncomplete)
+        throw new Error("A failed crawl was treated as complete")
+      spotifyService.libraryCrawlIncomplete = false
+      spotifyService.api.lastBackgroundStartedAt = 0
+      spotifyService.savedAlbums = [{ id: "first-page" }]
+      spotifyService.savedAlbumsNext = "https://api.spotify.com/v1/me/albums?offset=50&limit=50"
+      spotifyService.requestCollectionOffsets("albums",
+        spotifyService.libraryCollectionSpec("albums"), [50], 0,
+        [{ id: "cached-album" }, { id: "cached-second" }])
+      offsetCrawlCheck.start()
+    }
+  }
+  Timer {
+    id: offsetCrawlCheck
+    interval: 100
+    repeat: true
+    property int ticks: 0
+    onTriggered: {
+      if (!spotifyService.libraryCrawlIncomplete) {
+        if (++ticks > 80) throw new Error("A failing offset crawl never gave up")
+        return
+      }
+      stop()
+      if (spotifyService.api.timedJobs.length || spotifyService.lastError)
+        throw new Error("A failed offset crawl left work queued or replaced the action status")
+      var ids = spotifyService.savedAlbums.map(function(item) { return item.id })
+      if (ids.join(",") !== "first-page,cached-album,cached-second")
+        throw new Error("A failed offset crawl dropped cached rows: " + ids.join(","))
+      if (!spotifyService.savedAlbumsNext)
+        throw new Error("A failed offset crawl was marked complete")
+      spotifyService.flushLibraryCache()
+      if (spotifyService.libraryCacheFresh)
+        throw new Error("A failed offset crawl was saved as fresh")
       console.log("APP_SMOKE_PASS")
       Qt.quit()
     }

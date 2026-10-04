@@ -226,6 +226,10 @@ Item {
         && backgroundInFlight < Api.backgroundInFlightLimit(limit)
       var taken = Api.dequeueApiJob(requestQueue, allowBackground)
       var job = taken.job
+      if (job && job.deadlineAt && now() >= job.deadlineAt) {
+        expireTimedOutRequests(now())
+        continue
+      }
       // The pause that applies to this job, which for a page someone opened is
       // only ever its own refusals.
       var jobCooldown = Api.jobCooldownMs(job, now(), rateLimitedUntil,
@@ -348,7 +352,7 @@ Item {
               releaseRequestSlot(handle)
               return
             }
-          } else if (xhr.status >= 200 && xhr.status < 300) {
+          } else {
             restrictInFlight = false
           }
           // Refused by the personal client: try the shipped one, which still

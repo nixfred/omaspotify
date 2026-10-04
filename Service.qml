@@ -183,6 +183,7 @@ Item {
   property var artworkLastItems: []
   property bool libraryCacheReady: false
   property double libraryCacheFetchedAt: 0
+  property bool libraryCrawlIncomplete: false
   readonly property bool libraryCacheFresh: Api.libraryCacheIsFresh(
     libraryCacheFetchedAt, Date.now(), 6 * 3600000)
   property bool savedTracksCrawling: false
@@ -929,8 +930,8 @@ Item {
   function flushLibraryCache() {
     libraryCacheSaveTimer.stop()
     // An empty copy is never trusted, so a wiped or failed library is asked for again.
-    libraryCacheFetchedAt = playlists.concat(savedAlbums, followedArtists,
-      savedShows).length ? Date.now() : 0
+    libraryCacheFetchedAt = !libraryCrawlIncomplete && playlists.concat(
+      savedAlbums, followedArtists, savedShows).length ? Date.now() : 0
     libraryCacheFile.setText(Api.encodeLibraryCache(playlists, savedAlbums,
       followedArtists, savedShows, libraryCacheFetchedAt))
   }
@@ -1627,6 +1628,7 @@ Item {
     // A recent copy on disk is already on screen; refetching it is about thirty
     // requests that only help Spotify rate limit us.
     if (libraryCacheFresh) return
+    libraryCrawlIncomplete = false
     fillSidebarCollection("playlists")
     fillSpotifyPlaylists()
     fillSidebarCollection("albums")
@@ -1650,7 +1652,11 @@ Item {
     var found = []
     var ask = function(path, query, depth) {
       spotifyApi.request("GET", path, query, null, function(status, payload, error) {
-        if (expected !== root.dataSerial || error) return
+        if (expected !== root.dataSerial) return
+        if (error) {
+          root.libraryCrawlIncomplete = true
+          return
+        }
         var page = Api.normalizePage(payload, root.libraryMapper("playlist"))
         found = found.concat(page.items.filter(Api.isSpotifyPlaylist))
         if (page.next && depth < 40) return ask(page.next, null, depth + 1)
@@ -1667,12 +1673,14 @@ Item {
   function fillSidebarCollection(kind) {
     var spec = libraryCollectionSpec(kind)
     if (root[spec.loading]) return
-    loadLibraryCollection(kind, false, function(total) {
-      root.fanOutSidebarCollection(kind, Number(total) || 0)
+    var cached = root[spec.items]
+    loadLibraryCollection(kind, false, function(total, error) {
+      if (error) root.keepIncompleteCollection(kind, cached)
+      else root.fanOutSidebarCollection(kind, Number(total) || 0, cached)
     }, undefined, true)
   }
 
-  function continueSidebarCollection(kind, depth) {
+  function continueSidebarCollection(kind, depth, cached) {
     // 40 pages of 50 covers a very large library; the guard just stops a broken
     // cursor from looping forever.
     if (depth > 40) return
@@ -1682,30 +1690,32 @@ Item {
       if (kind === "playlists") refreshPlaylistEdits()
       return
     }
-    loadLibraryCollection(kind, true, function() {
-      root.continueSidebarCollection(kind, depth + 1)
+    loadLibraryCollection(kind, true, function(total, error) {
+      if (error) root.keepIncompleteCollection(kind, cached)
+      else root.continueSidebarCollection(kind, depth + 1, cached)
     }, undefined, true)
   }
 
   // Cursor-paged collections have to be walked in order. The rest report a
   // total on the first reply, so every remaining page is asked for at once.
-  function fanOutSidebarCollection(kind, total) {
+  function fanOutSidebarCollection(kind, total, cached) {
     var spec = libraryCollectionSpec(kind)
     if (spec.cursor === true) {
-      continueSidebarCollection(kind, 1)
+      continueSidebarCollection(kind, 1, cached)
       return
     }
     var limit = Number(spec.query.limit) || 50
     requestCollectionOffsets(kind, spec,
       Api.pageOffsets(Math.min(total, libraryCacheLimit), limit,
-        root[spec.items].length), 0)
+        root[spec.items].length), 0, cached)
   }
 
   // A dropped page leaves a hole in the middle of the library, so the offsets
   // that failed are asked for again rather than resumed from the end.
-  function requestCollectionOffsets(kind, spec, offsets, attempt) {
+  function requestCollectionOffsets(kind, spec, offsets, attempt, cached) {
     if (offsets.length === 0 || attempt > 2) {
-      root[spec.next] = ""
+      if (offsets.length > 0) keepIncompleteCollection(kind, cached)
+      else root[spec.next] = ""
       root[spec.loaded] = true
       if (kind === "playlists" && usingPersonalClientId)
         playlists = Api.withSpotifyPlaylists(playlists, spotifyPlaylists)
@@ -1725,10 +1735,19 @@ Item {
           if (error) failed.push(offset)
           else root.absorbCollectionPage(kind, spec, payload)
           if (pending > 0) return
-          root.requestCollectionOffsets(kind, spec, failed, attempt + 1)
+          root.requestCollectionOffsets(kind, spec, failed, attempt + 1, cached)
         }, { priority: "background" })
     }
     for (var i = 0; i < offsets.length; i++) ask(offsets[i])
+  }
+
+  // Pages that never arrived leave the cached rows in place and keep the
+  // library stale, so the next launch asks for it again.
+  function keepIncompleteCollection(kind, cached) {
+    var spec = libraryCollectionSpec(kind)
+    libraryCrawlIncomplete = true
+    var kept = Api.mergeUnique(root[spec.items], cached).slice(0, libraryCacheLimit)
+    if (kept.length !== root[spec.items].length) root[spec.items] = kept
   }
 
   function absorbCollectionPage(kind, spec, payload) {
@@ -2129,7 +2148,6 @@ Item {
         root[spec.loading] = false
         if (error) {
           if (background !== true) root.fail(error)
-          if (background === true) return
         } else {
           var mapper = root.libraryMapper(spec.mapper)
           var page = spec.cursor
@@ -2152,7 +2170,7 @@ Item {
         }
         if (typeof callback === "function")
           callback(payload && payload.total !== undefined ? payload.total
-            : (payload && payload.artists ? payload.artists.total : 0))
+            : (payload && payload.artists ? payload.artists.total : 0), error)
       }, { priority: background === true ? "background" : "interactive" })
   }
 
@@ -2429,6 +2447,7 @@ Item {
     var requestSerial = playlistItemsSerial
     // Rows already on screen came from the cache, so this is only a check.
     var drawn = !append && playlistItems.length > 0
+    var checking = drawn && !playlistItemsNext
     playlistItemsLoading = true
     pageRequest("GET", path, append ? null : { limit: 50 },
       function(status, payload, error) {
@@ -2478,7 +2497,7 @@ Item {
             root.playlistRestoreTargetCount, root.playlistItemsNext))
           root.loadPlaylistItems(true)
         else root.playlistRestoreTargetCount = 0
-      }, drawn || append === true)
+      }, checking)
   }
 
   function loadMorePlaylistItems() {
