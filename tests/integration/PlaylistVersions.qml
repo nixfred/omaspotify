@@ -6,6 +6,7 @@ import "plugin/Api.js" as Api
 ShellRoot {
   id: test
   Plugin.Service { id: service }
+  Plugin.Panel { id: panel; service: service; width: 1280; height: 800 }
   property var requests: []
   function complete(xhr, status, payload) {
     xhr.status = status
@@ -30,6 +31,21 @@ ShellRoot {
     return { items: [{ track: { id: id, name: id, uri: "spotify:track:" + id,
       artists: [] } }], next: null }
   }
+  function page(id, offset, count, next) {
+    var items = []
+    for (var i = 0; i < count; i++)
+      items.push({ track: { id: id, name: id, uri: "spotify:track:" + id, artists: [] } })
+    return { items: items, offset: offset, next: next || null }
+  }
+  function keptRows(id, count) {
+    var items = []
+    for (var i = 0; i < count; i++)
+      items.push({ id: id, uri: "spotify:track:" + id, playlistPosition: i })
+    return items
+  }
+  function requestsFor(id) {
+    return requests.filter(function(xhr) { return xhr.url.indexOf("/playlists/" + id) >= 0 })
+  }
   Timer {
     interval: 20
     running: true
@@ -50,17 +66,26 @@ ShellRoot {
         test.requests.push(xhr)
         return xhr
       }
-      var names = ["unchanged", "changed", "unknown", "failed"]
+      var names = ["unchanged", "changed", "unknown", "failed", "deep", "large"]
       var cache = { version: Api.QUERY_CACHE_VERSION, order: [], entries: {} }
       var entries = []
       for (var i = 0; i < names.length; i++) {
         var key = Api.queryCacheKey(["playlist", names[i]])
         cache.order.push(key)
-        cache.entries[key] = { updatedAt: Date.now() - 600000, data: {
-          item: { id: names[i], snapshotId: "v1" },
-          items: [{ id: "old-" + names[i], uri: "spotify:track:old-" + names[i] }], next: "" } }
-        entries.push({ id: names[i], name: names[i], uri: "spotify:playlist:" + names[i],
-          snapshotId: "v1" })
+        var data = {
+          item: { type: "playlist", id: names[i], snapshotId: "v1" },
+          items: [{ id: "old-" + names[i], uri: "spotify:track:old-" + names[i] }], next: "" }
+        if (names[i] === "deep") {
+          data.items = keptRows("old-deep", 100)
+          data.next = "https://api.spotify.com/v1/playlists/deep/items?offset=100&limit=50"
+        } else if (names[i] === "large") {
+          // What a capped playlist page leaves on disk.
+          data = Api.cappedPageSnapshot({ item: data.item,
+            items: keptRows("repeat", 250), next: "" }, 200)
+        }
+        cache.entries[key] = { updatedAt: Date.now() - 600000, data: data }
+        entries.push({ type: "playlist", id: names[i], name: names[i],
+          uri: "spotify:playlist:" + names[i], snapshotId: "v1" })
       }
       service.playlists = entries
       service.queryCacheReady = false
@@ -133,6 +158,64 @@ ShellRoot {
       pump()
       expect(requests.length === 8 && last().url.indexOf("fields=snapshot_id") >= 0,
         "A failed check was treated as fresh")
+
+      // Changed while the panel restores a deeper position: the new version
+      // is fetched from the top, not appended onto the old rows.
+      panel.currentTab = "playlists"
+      panel.restoredPlaylistId = "deep"
+      panel.restoredPlaylistItemCount = 150
+      service.openPlaylist(library("deep"), 150)
+      pump()
+      var deep = requestsFor("deep")
+      expect(deep.length === 1 && deep[0].url.indexOf("fields=snapshot_id") >= 0,
+        "Deep playlist was not checked")
+      complete(deep[0], 200, { snapshot_id: "v2" })
+      pump()
+      deep = requestsFor("deep")
+      expect(deep.length === 2 && deep[1].url.indexOf("offset=100") < 0
+        && deep[1].url.indexOf("/items") >= 0, "The restore paged on from stale rows")
+      expect(library("deep").snapshotId === "v2", "The deep library entry kept the old version")
+      complete(deep[1], 200, page("new-deep", 0, 50,
+        "https://api.spotify.com/v1/playlists/deep/items?offset=50&limit=50"))
+      pump()
+      complete(requestsFor("deep")[2], 200, page("new-deep", 50, 50,
+        "https://api.spotify.com/v1/playlists/deep/items?offset=100&limit=50"))
+      pump()
+      deep = requestsFor("deep")
+      expect(deep.length === 4 && deep[3].url.indexOf("offset=100") >= 0,
+        "The remembered depth was not restored")
+      complete(deep[3], 200, page("new-deep", 100, 50))
+      expect(service.playlistItems.length === 150, "The remembered depth was lost")
+      expect(service.playlistItems.every(function(row) { return row.id === "new-deep" }),
+        "Old and new versions were mixed")
+      panel.restoredPlaylistId = ""
+      panel.currentTab = "home"
+
+      // Capped: a kept 200-row page still pages on from its last position.
+      service.openPlaylist(library("large"))
+      pump()
+      var large = requestsFor("large")
+      complete(large[0], 200, { snapshot_id: "v1" })
+      expect(requestsFor("large").length === 1, "An unchanged capped playlist downloaded tracks")
+      expect(service.playlistItems.length === 200, "The capped rows were not drawn")
+      expect(service.playlistItemsNext.indexOf("offset=200") >= 0,
+        "An unchanged capped playlist lost Load More")
+      service.loadMorePlaylistItems()
+      large = requestsFor("large")
+      expect(large.length === 2 && large[1].url.indexOf("offset=200") >= 0,
+        "Load More did not resume after the kept rows")
+      complete(large[1], 200, page("repeat", 200, 50))
+      expect(service.playlistItems.length === 250
+        && service.playlistItems[249].playlistPosition === 249,
+        "Load More misplaced the remaining rows")
+      service.openPlaylist(library("large"), 250)
+      pump()
+      large = requestsFor("large")
+      expect(large.length === 3 && large[2].url.indexOf("offset=200") >= 0,
+        "A deeper remembered position was not restored from the capped cache")
+      complete(large[2], 200, page("repeat", 200, 50))
+      expect(service.playlistItems.length === 250, "The deeper position was not reached")
+
       service.api.cancelAll()
       console.log("PLAYLIST_VERSIONS_PASS")
       Qt.quit()

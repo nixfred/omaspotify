@@ -488,17 +488,23 @@ Item {
 
   function cancelAll() {
     cancellingAll = true
+    cancelForwardedRequests()
     var jobs = timedJobs.slice()
     for (var i = 0; i < jobs.length; i++) abortRequest(jobs[i].handle)
     cancelSearch()
-    if (fallbackTransport) fallbackTransport.cancelAll()
     cancellingAll = false
   }
 
   // Cancelled with the shared transport that carries them, as on sign-out.
+  // That queue is emptied first: freeing one of its slots would send its next job.
   function cancelForwardedRequests() {
     var jobs = timedJobs.slice()
-    for (var i = 0; i < jobs.length; i++)
+    var i
+    for (i = 0; i < jobs.length; i++) {
+      var forwarded = jobs[i].handle ? jobs[i].handle.forwardedRequest : null
+      if (forwarded && transportAlive(forwarded.owner)) forwarded.owner.cancelAll()
+    }
+    for (i = 0; i < jobs.length; i++)
       if (jobs[i].handle && jobs[i].handle.forwardedRequest) abortRequest(jobs[i].handle)
   }
 

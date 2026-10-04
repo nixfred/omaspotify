@@ -2472,6 +2472,9 @@ Item {
           return
         }
         // No version means we cannot establish freshness. Fetch the rows.
+        // The refetch starts first, so a restore woken by the new version
+        // waits for it instead of paging on from the old rows.
+        root.loadPlaylistItems(false)
         if (version) {
           root.propagatePlaylistSnapshot(playlistId, version)
         } else {
@@ -2479,7 +2482,6 @@ Item {
           item.snapshotId = ""
           root.selectedPlaylist = item
         }
-        root.loadPlaylistItems(false)
       }, true)
     if (handle.job) playlistItemsRequest = handle
   }

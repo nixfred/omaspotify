@@ -88,7 +88,8 @@ never share cooldown or pacing state. Fallback attempts retain the original
 request deadline and cancellation handle; the shared queue reports the expiry of
 an attempt it holds, so a shared cooldown is named as such. Removing or changing
 the fallback identity cancels requests it is still carrying, without callbacks,
-as signing out does. Every request logs where its time
+as signing out does. Cancelling empties the shared queue before any of its
+slots is freed, so a queued action cannot be sent during cancellation. Every request logs where its time
 went — queueing, token refresh, or the network — which is what makes a slow call
 diagnosable at all. See `docs/LIBRARY-DATA.md` for the measurements.
 
@@ -116,6 +117,11 @@ Cached playlist pages retain their `snapshotId`. A stale page first requests
 versions refresh the cache timestamp without fetching tracks. A newly found
 version is written to the library and detail copies of the playlist as well, so
 reopening it from the sidebar does not mistake the kept rows for outdated ones.
+The refetch starts before that write, so a restore it wakes waits for the new
+first page instead of appending to the old rows. A playlist cut to the 200-row
+cache cap keeps a cursor just after the last kept Spotify position, so Load
+More and deeper restores still reach the rest; pages without known positions
+lose their cursor.
 Known mismatches bypass the fresh-cache shortcut, and unknown versions fetch
 content. Metadata
 failures leave the visible rows and stale timestamp intact. Switching pages or

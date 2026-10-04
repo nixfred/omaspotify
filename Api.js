@@ -1001,9 +1001,22 @@ function cappedPageSnapshot(snapshot, limit) {
   }
   for (var i = 0; i < cut.length; i++) {
     var cursor = cut[i] === "items" ? "next" : cut[i] + "Next"
-    if (out.hasOwnProperty(cursor)) out[cursor] = ""
+    var resume = cut[i] === "items" ? playlistResumeCursor(out.item, out.items) : ""
+    if (resume || out.hasOwnProperty(cursor)) out[cursor] = resume
   }
   return out
+}
+
+// A kept playlist resumes after the last Spotify position it holds, which
+// counts duplicates and unavailable entries. Anything else cannot be resumed.
+function playlistResumeCursor(item, items) {
+  var rows = Array.isArray(items) ? items : []
+  if (!item || item.type !== "playlist" || !item.id || !rows.length) return ""
+  var last = rows[rows.length - 1] ? rows[rows.length - 1].playlistPosition : undefined
+  var position = Number(last)
+  if (last === null || last === undefined || !isFinite(position) || position < 0) return ""
+  return API_BASE + "/playlists/" + encodeURIComponent(String(item.id))
+    + "/items?offset=" + (Math.floor(position) + 1) + "&limit=50"
 }
 
 // The library changes rarely, so a recent copy is trusted rather than

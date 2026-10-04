@@ -975,6 +975,36 @@ TestCase {
     compare(calls, 0)
   }
 
+  function test_cancelAllDoesNotDispatchQueuedSharedMutation() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    for (var i = 0; i < 4; i++)
+      api.request("GET", "/me/playlists", null, null, function() {}, { shared: true })
+    api.request("PUT", "/me/player/play", null, {}, function() {}, { shared: true })
+    compare(requests.length, 4)
+    api.cancelAll()
+    compare(requests.length, 4, "Cancelling shared reads dispatched a queued mutation")
+    compare(api.timedJobs.length, 0)
+    compare(api.fallbackTransport.timedJobs.length, 0)
+    compare(api.fallbackTransport.requestsInFlight, 0)
+  }
+
+  function test_removingFallbackDoesNotDispatchQueuedSharedMutation() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    var calls = 0
+    for (var i = 0; i < 4; i++)
+      api.request("GET", "/me/playlists", null, null, function() { calls++ }, { shared: true })
+    api.request("PUT", "/me/player/play", null, {}, function() { calls++ }, { shared: true })
+    compare(requests.length, 4)
+    api.fallbackAuth = null
+    wait(1)
+    compare(requests.length, 4, "Changing clients dispatched a queued mutation")
+    for (i = 0; i < 4; i++) verify(requests[i].aborted)
+    compare(api.timedJobs.length, 0)
+    compare(calls, 0)
+  }
+
   function test_changingFallbackCancelsForwardedRequest() {
     var api = createTemporaryObject(apiComponent, testCase)
     api.fallbackAuth = fakeSharedAuth

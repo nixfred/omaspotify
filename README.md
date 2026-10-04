@@ -222,7 +222,8 @@ The local Connect authorization remains separate. The personal and shipped apps
 have separate request queues, cooldowns, and concurrency limits: a refusal from
 the shipped app cannot stall requests through your personal app.
 
-Playlists you open are cached on disk (up to 200 loaded rows per page, 16 pages).
+Playlists you open are cached on disk (up to 200 loaded rows per page, 16 pages);
+Load More continues after the cached rows of a longer playlist.
 Reopening draws cached rows immediately. After five minutes, a small
 `snapshot_id` check establishes whether the playlist changed; unchanged versions
 keep their rows without downloading tracks again. Changed or unknown versions
