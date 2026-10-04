@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- While Spotify is limiting requests, a page you open now loads or says
+  Spotify is busy within 15 seconds. It used to sit on Loading for minutes
+  behind the library refresh. When Spotify asks for a wait longer than that,
+  the page says so at once. After a refusal, the background library refresh
+  pauses for at least a minute instead of retrying. It keeps the library you
+  already had and no longer replaces the status of your last action. A Play
+  pressed during a long wait can no longer go off after it has timed out.
 - On a Sonos, shuffle and repeat-one can now be on together. Turning shuffle
   on during repeat-one did nothing, and switching repeat to repeat-one turned
   shuffle off.
