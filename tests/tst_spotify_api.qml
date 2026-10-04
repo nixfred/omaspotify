@@ -854,4 +854,69 @@ TestCase {
     compare(api.diagnostics[0].route, "/search")
     verify(JSON.stringify(api.diagnostics).indexOf("private-query") < 0)
   }
+  function test_sharedRefusalDoesNotPausePersonalRead() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    api.request("GET", "/artists/catalog/albums", null, null, function() {},
+      { priority: "interactive" })
+    complete(requests[0], 403)
+    compare(requests.length, 2)
+    compare(requests[1].authorization, "Bearer shared-token")
+    requests[1].retryAfter = "30"
+    complete(requests[1], 429)
+    api.request("GET", "/playlists/owned/items", null, null, function() {},
+      { priority: "interactive" })
+    compare(requests.length, 3, "A shared-client refusal must not hold a personal-client read")
+    compare(requests[2].authorization, "Bearer mock-token")
+    complete(requests[2], 200)
+  }
+
+  function test_personalRefusalDoesNotPauseSharedRead() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    api.request("GET", "/me", null, null, function() {},
+      { priority: "interactive", retryRateLimit: false })
+    requests[0].retryAfter = "30"
+    complete(requests[0], 429)
+    api.request("GET", "/me/playlists", null, null, function() {},
+      { priority: "interactive", shared: true })
+    // Direct shared jobs must bypass even the primary queue's cooldown.
+    compare(requests.length, 2)
+    compare(requests[1].authorization, "Bearer shared-token")
+  }
+
+  function test_fallbackCancellationAbortsWireRequest() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    var calls = 0
+    var handle = api.request("GET", "/artists/catalog/albums", null, null,
+      function() { calls++ }, { priority: "interactive" })
+    complete(requests[0], 403)
+    api.abortRequest(handle)
+    verify(requests[1].aborted)
+    complete(requests[1], 200)
+    compare(calls, 0)
+    compare(api.timedJobs.length, 0)
+    compare(api.fallbackTransport.timedJobs.length, 0)
+    compare(api.requestsInFlight, 0)
+    compare(api.fallbackTransport.requestsInFlight, 0)
+  }
+
+  function test_fallbackKeepsOriginalDeadline() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    var results = []
+    api.request("GET", "/artists/catalog/albums", null, null,
+      function(status) { results.push(status) },
+      { priority: "interactive", timeoutMs: 1000 })
+    clock += 900
+    complete(requests[0], 403)
+    clock += 100
+    api.expireTimedOutRequests(clock)
+    verify(requests[1].aborted)
+    compare(results, [0])
+    complete(requests[1], 200)
+    compare(results, [0])
+  }
+
 }

@@ -42,6 +42,18 @@ if rg -i 'ReferenceError|TypeError|binding loop|Cannot assign|Unable to assign|F
 fi
 echo 'Quickshell app smoke test passed.'
 
+cp "$source_root/tests/integration/PlaylistVersions.qml" "$test_root/app/shell.qml"
+env QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic NO_AT_BRIDGE=1 XDG_STATE_HOME="$test_root/state" \
+  timeout 15s dbus-run-session -- qs --no-color -p "$test_root/app" > "$test_root/versions-output" 2>&1 || {
+  cat "$test_root/versions-output"
+  exit 1
+}
+rg -q PLAYLIST_VERSIONS_PASS "$test_root/versions-output" || {
+  cat "$test_root/versions-output"
+  exit 1
+}
+echo 'Quickshell playlist version checks passed.'
+
 mkdir -p "$test_root/sonos/plugin/scripts" "$test_root/sonos-state"
 cp "$source_root/"*.qml "$source_root/"*.js "$test_root/sonos/plugin/"
 cp "$source_root/tests/integration/SonosControl.qml" "$test_root/sonos/shell.qml"

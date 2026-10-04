@@ -2428,13 +2428,50 @@ Item {
     // depth already on screen instead of leaving a shorter list behind.
     playlistRestoreTargetCount = Math.max(playlistRestoreTargetCount,
       playlistItems.length)
-    if (pageCache.freshness(playlistCacheKey) === "fresh") {
+    var storedVersion = String(kept && kept.item && kept.item.snapshotId || "")
+    var knownVersion = String(playlist.snapshotId || "")
+    var knownChange = storedVersion && knownVersion && storedVersion !== knownVersion
+    if (!knownChange && pageCache.freshness(playlistCacheKey) === "fresh") {
       if (Api.playlistRestoreShouldContinue(playlistItems.length,
           playlistRestoreTargetCount, playlistItemsNext)) loadPlaylistItems(true)
       else playlistRestoreTargetCount = 0
       return
     }
-    loadPlaylistItems(false)
+    if (kept && storedVersion && !knownChange) checkPlaylistVersion(kept)
+    else loadPlaylistItems(false)
+  }
+
+  function checkPlaylistVersion(kept) {
+    var playlistId = String(selectedPlaylist.id)
+    var expected = dataSerial
+    var serial = playlistItemsSerial
+    var cacheKey = playlistCacheKey
+    var handle = pageRequest("GET", "/playlists/" + encodeURIComponent(playlistId),
+      { fields: "snapshot_id" }, function(status, payload, error) {
+        if (expected !== root.dataSerial || serial !== root.playlistItemsSerial
+            || !root.selectedPlaylist || String(root.selectedPlaylist.id) !== playlistId) return
+        root.playlistItemsRequest = null
+        if (error) {
+          // Keep the visible cache, but leave it stale so a later visit retries.
+          root.playlistRestoreTargetCount = 0
+          return
+        }
+        var version = String(payload && payload.snapshot_id || "")
+        if (version && version === String(kept.item.snapshotId || "")) {
+          pageCache.write(cacheKey, kept)
+          if (Api.playlistRestoreShouldContinue(root.playlistItems.length,
+              root.playlistRestoreTargetCount, root.playlistItemsNext))
+            root.loadPlaylistItems(true)
+          else root.playlistRestoreTargetCount = 0
+          return
+        }
+        // No version means we cannot establish freshness. Fetch the rows.
+        var item = Object.assign({}, root.selectedPlaylist)
+        item.snapshotId = version
+        root.selectedPlaylist = item
+        root.loadPlaylistItems(false)
+      }, true)
+    if (handle.job) playlistItemsRequest = handle
   }
 
   function stopPlaylistItems() {
