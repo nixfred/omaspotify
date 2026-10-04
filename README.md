@@ -192,9 +192,12 @@ which has a quota of its own that nobody else is spending.
 1. Create the app, and tick **Web API** under "Which API/SDKs are you planning to
    use?". Nothing else is needed.
 2. Add `http://127.0.0.1:8989/login` as the app's redirect URI, exactly.
-3. Set **Spotify Developer app client ID** in the plugin settings and apply.
-   Leave it empty to use the shipped app. Invalid IDs produce an error.
-4. Authorize your app. Changing the ID clears the current session; stored
+3. Open **Settings → Personal Spotify app → Setup guide**. The same optional
+   guide is offered on the login page and after shared-app quota errors. It
+   links to the developer dashboard and can copy the exact Redirect URI. Paste
+   the **Client ID**, then choose **Save app**. Never enter the Client Secret.
+   Leave the field empty to use the shipped app; malformed IDs cannot be saved.
+4. Choose **Authorize** in the guide. Changing the ID clears the current session; stored
    sessions are kept separate per client ID.
 
 **Keep the shipped app authorized as well.** Spotify
@@ -215,7 +218,17 @@ a Premium account. Since
 a developer account may hold up to 25 client IDs, but the quota is counted per
 developer account rather than per ID, so making more of them does not buy more
 requests.
-The local Connect authorization remains separate.
+The local Connect authorization remains separate. The personal and shipped apps
+have separate request queues, cooldowns, and concurrency limits: a refusal from
+the shipped app cannot stall requests through your personal app.
+
+Playlists you open are cached on disk (up to 200 loaded rows per page, 24 pages).
+Reopening draws cached rows immediately. After five minutes, a small
+`snapshot_id` check establishes whether the playlist changed; unchanged versions
+keep their rows without downloading tracks again. Changed or unknown versions
+refresh the visible depth, and explicit reloads always fetch again. A failed
+check preserves the visible cache and leaves it stale for the next visit.
+OmaSpotify does not download every playlist in the background.
 
 ### If playback setup fails
 

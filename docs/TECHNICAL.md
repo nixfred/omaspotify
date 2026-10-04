@@ -69,19 +69,23 @@ always the one that lands. The optimistic slider value is held until the player
 reports it, and playback state is refetched once the drag settles rather than
 after every command.
 
-Web API requests go through one queue with four running at a time. Each request
+Web API requests use a SpotifyTransport queue per authorized app, with four
+running at a time per queue. Each request
 carries a priority: a button you pressed first, then a page you opened, then
 ordinary work, then background work such as the library crawl. Background work
 is capped at two of the four slots, spaced apart, and stands aside for three
 seconds after anything you open, so a page you are waiting on is never behind
 the crawl.
 
-The rate limit belongs to the client ID, which we share with every other app
-built on it, so a refusal can arrive without us having sent much at all. On a
-429 the app honours `Retry-After` for everything, and the gap between background
+The shipped developer app is shared across installations, so a refusal can
+arrive without this user having sent much at all. Development-mode quota is
+counted per developer account. On a 429 the affected transport honours
+`Retry-After`, and the gap between background
 requests doubles and stays wide for the rest of the run. One page you are
 waiting on may try once during a cooldown, in case the refusal has slack in it;
-after being refused itself it waits its turn. Every request logs where its time
+after being refused itself it waits its turn. Personal and fallback transports
+never share cooldown or pacing state. Fallback attempts retain the original
+request deadline and cancellation handle. Every request logs where its time
 went — queueing, token refresh, or the network — which is what makes a slow call
 diagnosable at all. See `docs/LIBRARY-DATA.md` for the measurements.
 
@@ -103,6 +107,18 @@ keeps its shorter deadline. A refused foreground request whose `Retry-After`
 cannot fit inside its remaining deadline reports the rate limit at once instead
 of waiting to time out. Expired requests are removed before freed slots can send
 queued commands, so an old Play action cannot execute after timing out.
+
+Cached playlist pages retain their `snapshotId`. A stale page first requests
+`GET /playlists/{id}?fields=snapshot_id` with revalidation priority. Matching
+versions refresh the cache timestamp without fetching tracks. Known mismatches
+bypass the fresh-cache shortcut, and unknown versions fetch content. Metadata
+failures leave the visible rows and stale timestamp intact. Switching pages or
+explicitly loading more cancels an outstanding version check.
+
+The optional ClientSetupPopup presents the dashboard link, live redirect URI,
+copy action, validated ID field and authorization status without a scroll view.
+It uses the existing persisted `clientId` setting and PKCE authentication; no
+client secret is collected.
 
 ## Runtime requirements
 
