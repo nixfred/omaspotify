@@ -91,14 +91,18 @@ aside for at least a minute, or longer if `Retry-After` requires it. Background
 requests do not silently retry a 429 by default. Failed background library
 refreshes preserve the cached collection and stop that crawl without replacing
 the visible action status; a crawl that lost pages keeps the cached rows and is
-not saved as fresh, so it is retried next time. A cached-page check gives up
-after the same 15 seconds as an opened page and never holds the list in a
+not saved as fresh, so it is retried next time. Automatic checks of a page
+already on screen are still background work, but they run ahead of queued
+library pages so they are not starved by a long crawl. A cached-page check gives
+up after the same 15 seconds as an opened page and never holds the list in a
 loading state; opening, reloading or loading more replaces it. A playlist that
 failed to load stays failed until it is opened again rather than being reloaded
 automatically. Foreground requests, including an explicit Load More, have a
 15-second total deadline, including time spent in the queue and retries; search
-keeps its shorter deadline. Expired requests are removed before freed slots can
-send queued commands, so an old Play action cannot execute after timing out.
+keeps its shorter deadline. A refused foreground request whose `Retry-After`
+cannot fit inside its remaining deadline reports the rate limit at once instead
+of waiting to time out. Expired requests are removed before freed slots can send
+queued commands, so an old Play action cannot execute after timing out.
 
 ## Runtime requirements
 

@@ -740,6 +740,90 @@ TestCase {
     verify(requests[2].url.indexOf("/me/shows") >= 0)
   }
 
+  function test_longRefusalReturnsBeforeWatchdog() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    var statuses = []
+    var errors = []
+    api.request("GET", "/playlists/uncached/items", null, null,
+      function(status, payload, error) { statuses.push(status); errors.push(error) },
+      { priority: "interactive" })
+    requests[0].retryAfter = "30"
+    complete(requests[0], 429)
+    compare(statuses.length, 1, "a retry that cannot fit the deadline reports at once")
+    compare(statuses[0], 429)
+    verify(errors[0].indexOf("Try again in 30 seconds") >= 0)
+    compare(api.timedJobs.length, 0)
+    compare(api.requestQueue.length, 0)
+    verify(api.backgroundSuspendedUntil >= clock + Api.API_BACKGROUND_RECOVERY_MS)
+    api.expireTimedOutRequests(clock + Api.API_FOREGROUND_TIMEOUT_MS)
+    clock = api.interactiveLimitedUntil
+    api.pumpRequests()
+    compare(statuses.length, 1, "the refused page is never reported twice")
+    compare(requests.length, 1, "nothing is sent ahead of or after Retry-After")
+  }
+
+  function test_shortRefusalRetriesWithinDeadline() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    var statuses = []
+    api.request("GET", "/playlists/uncached/items", null, null,
+      function(status) { statuses.push(status) }, { priority: "interactive" })
+    requests[0].retryAfter = "2"
+    complete(requests[0], 429)
+    compare(statuses.length, 0)
+    clock = api.interactiveLimitedUntil - 1
+    api.pumpRequests()
+    compare(requests.length, 1, "Retry-After is respected")
+    clock = api.interactiveLimitedUntil
+    api.pumpRequests()
+    compare(requests.length, 2)
+    complete(requests[1], 200)
+    compare(statuses, [200])
+  }
+
+  function test_cancelledRefusedRequestIsNotRetried() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    var calls = 0
+    var handle = api.request("GET", "/playlists/uncached/items", null, null,
+      function() { calls++ }, { priority: "interactive" })
+    requests[0].retryAfter = "2"
+    complete(requests[0], 429)
+    api.abortRequest(handle)
+    clock = api.interactiveLimitedUntil
+    api.pumpRequests()
+    api.expireTimedOutRequests(clock + Api.API_FOREGROUND_TIMEOUT_MS)
+    compare(requests.length, 1)
+    compare(calls, 0)
+    compare(api.requestsInFlight, 0)
+  }
+
+  function test_pageRevalidationRunsAheadOfLibraryCrawl() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    var crawl = []
+    api.request("GET", "/me/albums", null, null, function() {},
+      { priority: "background" })
+    for (var i = 0; i < 3; i++)
+      api.request("GET", "/me/albums", { offset: 50 * (i + 1) }, null,
+        function() {}, { priority: "background" })
+    var checked = 0
+    api.request("GET", "/playlists/cached/items", null, null,
+      function() { checked++ }, { priority: "revalidate", timeoutMs: 15000 })
+    compare(requests.length, 1, "background spacing still applies")
+    clock += Api.backgroundSpacingForRefusals(0)
+    api.pumpRequests()
+    compare(requests.length, 2)
+    verify(requests[1].url.indexOf("/playlists/cached/items") >= 0,
+      "the page check overtakes queued library pages")
+    complete(requests[0], 429)
+    complete(requests[1], 429)
+    compare(checked, 1, "a refused check is not retried")
+    clock = api.rateLimitedUntil
+    api.pumpRequests()
+    compare(requests.length, 2, "the recovery pause still holds the crawl")
+    clock = api.backgroundSuspendedUntil
+    api.pumpRequests()
+    compare(requests.length, 3)
+  }
+
   function test_expiredMutationCannotDispatchBetweenWatchdogTicks() {
     var api = createTemporaryObject(apiComponent, testCase)
     var limit = fillEverySlot(api)

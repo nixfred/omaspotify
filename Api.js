@@ -296,6 +296,9 @@ function apiJobPriority(job) {
   if (apiRequestIsMutating(job.method)) return 2
   var priority = String(job.priority || "")
   if (priority === "interactive") return 1
+  // A page already on screen is checked before the library crawl continues,
+  // with the same pacing and recovery pause as any other background work.
+  if (priority === "revalidate") return -0.5
   // Library crawling waits behind anything the person actually asked for.
   return priority === "background" ? -1 : 0
 }

@@ -344,8 +344,11 @@ Item {
               + Api.apiCooldownMs(now(), rateLimitedUntil) + " ms"
               + " (retry " + job.rateLimitRetries
               + ", background gap now " + backgroundSpacingMs + " ms)")
+            var resumeAt = Api.apiJobPriority(job) >= 1
+              ? interactiveLimitedUntil : rateLimitedUntil
             if (job.retryRateLimit !== false
-                && Api.shouldRetryRateLimit(job.rateLimitRetries)) {
+                && Api.shouldRetryRateLimit(job.rateLimitRetries)
+                && (!job.deadlineAt || resumeAt <= job.deadlineAt)) {
               job.activeDeadlineAt = 0
               job.rateLimitRetries += 1
               requestQueue = Api.enqueueApiJob(requestQueue, job)

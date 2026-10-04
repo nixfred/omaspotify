@@ -54,7 +54,7 @@ ShellRoot {
       spotifyService.api.rateLimitedUntil = Date.now() + 60000
       var cachedRefresh = spotifyService.pageRequest("GET", "/me/albums", null,
         function() {}, true)
-      if (!cachedRefresh.job || cachedRefresh.job.priority !== "background")
+      if (!cachedRefresh.job || cachedRefresh.job.priority !== "revalidate")
         throw new Error("A cached page bypassed background pacing")
       spotifyService.api.cancelAll()
       spotifyService.api.rateLimitedUntil = 0
@@ -67,10 +67,16 @@ ShellRoot {
         next: "https://api.spotify.com/v1/playlists/cached-list/items?offset=50&limit=50" } }
       spotifyService.queryCacheReady = false
       spotifyService.applyQueryCacheFile(JSON.stringify(stored))
+      var crawlPages = []
+      for (var page = 1; page <= 3; page++)
+        crawlPages.push(spotifyService.api.request("GET", "/me/albums",
+          { offset: page * 50 }, null, function() {}, { priority: "background" }))
       spotifyService.openPlaylist({ id: "cached-list" })
       var check = spotifyService.api.requestQueue[0]
-      if (!check || check.priority !== "background" || !check.deadlineAt)
-        throw new Error("A cached playlist check was not paced and bounded")
+      if (!check || check.priority !== "revalidate" || !check.deadlineAt)
+        throw new Error("A cached playlist check waited behind the library crawl")
+      for (page = 0; page < crawlPages.length; page++)
+        spotifyService.api.abortRequest(crawlPages[page])
       if (playlistView.loading || !playlistView.hasMore)
         throw new Error("A cached playlist check disabled Load More")
       playlistView.requestMore()
@@ -97,7 +103,35 @@ ShellRoot {
       spotifyService.ensurePlaylistItemCount(100)
       if (playlistView.loading || spotifyService.api.timedJobs.length)
         throw new Error("Restoring the scroll depth reloaded a failed playlist")
+      var realXhrFactory = spotifyService.api.xhrFactory
+      var refused = null
+      spotifyService.api.auth = { loggedIn: true,
+        withAccessToken: function(callback) { callback("smoke-token", "") },
+        invalidateAccessToken: function() {} }
+      spotifyService.api.xhrFactory = function() {
+        refused = { readyState: 0, status: 0, responseText: "",
+          onreadystatechange: null, open: function() {}, send: function() {},
+          setRequestHeader: function() {}, abort: function() {},
+          getResponseHeader: function(name) {
+            return String(name).toLowerCase() === "retry-after" ? "30" : "" } }
+        return refused
+      }
+      spotifyService.openPlaylist({ id: "uncached-c" })
+      if (!playlistView.loading || !refused)
+        throw new Error("An uncached playlist was not requested")
+      refused.status = 429
+      refused.responseText = "{}"
+      refused.readyState = XMLHttpRequest.DONE
+      refused.onreadystatechange()
+      if (playlistView.loading || spotifyService.playlistItemsStatus !== 429
+          || spotifyService.playlistItemsError.indexOf("Spotify is busy") < 0)
+        throw new Error("A long refusal kept the playlist Loading")
+      spotifyService.api.xhrFactory = realXhrFactory
       spotifyService.api.auth = realAuth
+      spotifyService.api.rateLimitedUntil = 0
+      spotifyService.api.interactiveLimitedUntil = 0
+      spotifyService.api.restrictInFlight = false
+      spotifyService.api.backgroundRefusals = 0
       spotifyService.api.backgroundSuspendedUntil = 0
       spotifyService.api.lastBackgroundStartedAt = 0
       spotifyService.api.lastInteractiveStartedAt = 0

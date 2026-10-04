@@ -1597,7 +1597,7 @@ Item {
   // so its refresh uses the same pacing and recovery pause as library work.
   function pageRequest(method, path, query, callback, revalidating) {
     return spotifyApi.request(method, path, query, null, callback,
-      { priority: revalidating === true ? "background" : "interactive",
+      { priority: revalidating === true ? "revalidate" : "interactive",
         timeoutMs: Api.API_FOREGROUND_TIMEOUT_MS })
   }
 
