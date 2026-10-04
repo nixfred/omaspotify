@@ -1,11 +1,20 @@
 import QtQuick
 import Quickshell
 import "plugin" as Plugin
+import "plugin/Api.js" as Api
 
 ShellRoot {
   Plugin.Service { id: spotifyService }
   Plugin.Panel { id: panel; service: spotifyService; width: 1280; height: 800 }
   Plugin.BarWidget { id: widget }
+  Plugin.MediaCollection {
+    id: playlistView
+    service: spotifyService
+    sourceItems: spotifyService.playlistItems
+    loading: spotifyService.playlistItemsLoading
+    hasMore: spotifyService.playlistItemsNext !== ""
+    onLoadMoreRequested: spotifyService.loadMorePlaylistItems()
+  }
   Timer {
     interval: 20
     running: true
@@ -50,22 +59,45 @@ ShellRoot {
       spotifyService.api.cancelAll()
       spotifyService.api.rateLimitedUntil = 0
       spotifyService.api.backgroundSuspendedUntil = Date.now() + 60000
-      spotifyService.selectedPlaylist = { id: "smoke-list" }
-      spotifyService.playlistItems = [{ id: "cached-row" }]
-      spotifyService.playlistItemsNext = ""
-      spotifyService.playlistItemsLoading = false
-      spotifyService.loadPlaylistItems(false)
+      var cachedKey = Api.queryCacheKey(["playlist", "cached-list"])
+      var stored = { version: Api.QUERY_CACHE_VERSION, order: [cachedKey], entries: {} }
+      stored.entries[cachedKey] = { updatedAt: Date.now() - 600000, data: {
+        item: { id: "cached-list" },
+        items: [{ id: "cached-row", uri: "spotify:track:cached-row" }],
+        next: "https://api.spotify.com/v1/playlists/cached-list/items?offset=50&limit=50" } }
+      spotifyService.queryCacheReady = false
+      spotifyService.applyQueryCacheFile(JSON.stringify(stored))
+      spotifyService.openPlaylist({ id: "cached-list" })
       var check = spotifyService.api.requestQueue[0]
-      if (!spotifyService.playlistItemsLoading || !check
-          || check.priority !== "background" || !check.deadlineAt)
+      if (!check || check.priority !== "background" || !check.deadlineAt)
         throw new Error("A cached playlist check was not paced and bounded")
-      spotifyService.playlistItemsNext = "https://api.spotify.com/v1/playlists/smoke-list/items?offset=50&limit=50"
-      spotifyService.loadMorePlaylistItems()
-      if (spotifyService.api.requestQueue.length || spotifyService.playlistItemsLoading)
+      if (playlistView.loading || !playlistView.hasMore)
+        throw new Error("A cached playlist check disabled Load More")
+      playlistView.requestMore()
+      if (spotifyService.api.requestQueue.length || playlistView.loading)
         throw new Error("Load More waited behind a paused cached check")
+      if (!spotifyService.lastError)
+        throw new Error("A failed Load More was not reported")
       if (spotifyService.playlistItems.length !== 1
           || spotifyService.playlistItems[0].id !== "cached-row")
         throw new Error("Load More dropped the cached rows")
+      var realAuth = spotifyService.api.auth
+      spotifyService.api.auth = { loggedIn: true,
+        withAccessToken: function() {}, invalidateAccessToken: function() {} }
+      spotifyService.openPlaylist({ id: "uncached-a" })
+      if (!playlistView.loading) throw new Error("An uncached playlist did not show Loading")
+      spotifyService.openPlaylist({ id: "uncached-b" })
+      if (spotifyService.api.timedJobs.length !== 1)
+        throw new Error("Switching playlists left the previous request running")
+      spotifyService.api.expireTimedOutRequests(Date.now() + Api.API_FOREGROUND_TIMEOUT_MS + 1000)
+      if (playlistView.loading || spotifyService.selectedPlaylist.id !== "uncached-b")
+        throw new Error("A timed-out playlist kept Loading")
+      if (spotifyService.playlistItemsError.indexOf("Try again") < 0)
+        throw new Error("A timed-out playlist gave no retry message")
+      spotifyService.ensurePlaylistItemCount(100)
+      if (playlistView.loading || spotifyService.api.timedJobs.length)
+        throw new Error("Restoring the scroll depth reloaded a failed playlist")
+      spotifyService.api.auth = realAuth
       spotifyService.api.backgroundSuspendedUntil = 0
       spotifyService.api.lastBackgroundStartedAt = 0
       spotifyService.api.lastInteractiveStartedAt = 0

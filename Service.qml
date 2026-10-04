@@ -398,7 +398,7 @@ Item {
   property int playlistItemsSerial: 0
   property int playlistRestoreTargetCount: 0
   property var selectedPlaylist: null
-  property var playlistCheckRequest: null
+  property var playlistItemsRequest: null
   property string currentUserId: ""
   property string currentUserName: ""
   readonly property string playlistItemsEmptyMessage: Api.playlistItemsEmptyMessage(
@@ -910,7 +910,8 @@ Item {
 
   function keepPlaylistPage() {
     playlistCacheSaveTimer.stop()
-    if (!playlistCacheKey || playlistItemsLoading || playlistItemsError) return
+    if (!playlistCacheKey || playlistItemsLoading || playlistItemsRequest
+        || playlistItemsError) return
     if (playlistFromCache) return
     pageCache.write(playlistCacheKey, playlistSnapshot)
   }
@@ -2437,32 +2438,32 @@ Item {
   }
 
   function stopPlaylistItems() {
-    spotifyApi.abortRequest(playlistCheckRequest)
-    playlistCheckRequest = null
+    spotifyApi.abortRequest(playlistItemsRequest)
+    playlistItemsRequest = null
     playlistItemsSerial++
     playlistItemsLoading = false
   }
 
-  function loadPlaylistItems(append) {
+  function loadPlaylistItems(append, explicit) {
     if (!selectedPlaylist || !selectedPlaylist.id) return
-    if (playlistItemsLoading && !playlistCheckRequest) return
+    if (explicit !== true && (playlistItemsLoading || playlistItemsRequest)) return
     var path = append ? playlistItemsNext
       : "/playlists/" + encodeURIComponent(String(selectedPlaylist.id)) + "/items"
     if (!path) return
-    if (playlistCheckRequest) stopPlaylistItems()
+    if (playlistItemsLoading || playlistItemsRequest) stopPlaylistItems()
     var playlistId = String(selectedPlaylist.id)
     var expected = dataSerial
     var requestSerial = playlistItemsSerial
-    // Rows already on screen came from the cache, so this is only a check.
-    var drawn = !append && playlistItems.length > 0
-    var checking = drawn && !playlistItemsNext
-    playlistItemsLoading = true
+    // Rows already on screen are only being checked or restored, so that
+    // waits its turn without holding the list in a loading state.
+    var background = explicit !== true && playlistItems.length > 0
+    playlistItemsLoading = !background
     var handle = pageRequest("GET", path, append ? null : { limit: 50 },
       function(status, payload, error) {
         if (expected !== root.dataSerial) return
         if (requestSerial !== root.playlistItemsSerial) return
         if (!root.selectedPlaylist || String(root.selectedPlaylist.id) !== playlistId) return
-        root.playlistCheckRequest = null
+        root.playlistItemsRequest = null
         root.playlistItemsLoading = false
         if (error) {
           root.playlistRestoreTargetCount = 0
@@ -2472,7 +2473,7 @@ Item {
             root.currentUserId !== "")
           // What was drawn from the cache stays: a failed check is no reason
           // to empty a list that is already on screen.
-          if (drawn) return
+          if (background) return
           if (!append) {
             root.playlistItemsStatus = status
             root.playlistItemsError = hidden ? "" : error
@@ -2480,7 +2481,7 @@ Item {
           if (!hidden || append) root.fail(error)
           return
         }
-        root.playlistFromCache = false
+        if (!append) root.playlistFromCache = false
         var fallbackPosition = append && root.playlistItems.length
           ? Api.playlistPositionAt(root.playlistItems,
             root.playlistItems.length - 1) + 1 : 0
@@ -2506,12 +2507,12 @@ Item {
             root.playlistRestoreTargetCount, root.playlistItemsNext))
           root.loadPlaylistItems(true)
         else root.playlistRestoreTargetCount = 0
-      }, checking)
-    playlistCheckRequest = checking && handle.job ? handle : null
+      }, background)
+    if (handle.job) playlistItemsRequest = handle
   }
 
   function loadMorePlaylistItems() {
-    loadPlaylistItems(true)
+    loadPlaylistItems(true, true)
   }
 
   function ensurePlaylistItemCount(value) {
@@ -2519,9 +2520,8 @@ Item {
     var target = Api.normalizedPlaylistRestoreCount(value)
     if (target <= playlistItems.length) return
     playlistRestoreTargetCount = Math.max(playlistRestoreTargetCount, target)
-    if (playlistItemsLoading) return
-    if (playlistItems.length === 0) loadPlaylistItems(false)
-    else if (playlistItemsNext) loadPlaylistItems(true)
+    if (playlistItemsLoading || playlistItemsRequest) return
+    if (playlistItemsNext) loadPlaylistItems(true)
     else playlistRestoreTargetCount = 0
   }
 
@@ -2558,7 +2558,7 @@ Item {
         root.updatePlaylistSnapshot(playlist.id, payload && payload.snapshot_id)
         root.succeed("Added to " + String(playlist.name || "playlist"))
         if (root.selectedPlaylist && root.selectedPlaylist.id === playlist.id)
-          root.loadPlaylistItems(false)
+          root.loadPlaylistItems(false, true)
         if (root.detailItem && root.detailItem.id === playlist.id) root.openDetail(root.detailItem)
       })
   }
@@ -2697,7 +2697,7 @@ Item {
       playlistItemsNext = ""
       playlistItemsError = ""
       playlistItemsStatus = 0
-      loadPlaylistItems(false)
+      loadPlaylistItems(false, true)
     }
     if (detailItem && detailItem.type === "playlist" && detailItem.id === playlist.id)
       openDetail(detailItem, "", restoredDetailItemCount)
@@ -4494,6 +4494,7 @@ Item {
     savedEpisodesLoading = false
     savedAudiobooksLoading = false
     playlistItemsLoading = false
+    playlistItemsRequest = null
     playlistActionBusy = false
     playlistConversionBusy = false
     queueLoading = false
