@@ -34,6 +34,7 @@ Popup {
     accent: popup.panel.accent
     fontFamily: popup.panel.fontFamily
     onDismissed: popup.close()
+    onClientSaved: popup.panel.draftClientId = String(popup.panel.service.settings.clientId || "")
     onDashboardRequested: Qt.openUrlExternally("https://developer.spotify.com/dashboard")
     onCopyRequested: function(text) { Quickshell.execDetached(["wl-copy", text]) }
   }

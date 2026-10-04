@@ -85,7 +85,10 @@ requests doubles and stays wide for the rest of the run. One page you are
 waiting on may try once during a cooldown, in case the refusal has slack in it;
 after being refused itself it waits its turn. Personal and fallback transports
 never share cooldown or pacing state. Fallback attempts retain the original
-request deadline and cancellation handle. Every request logs where its time
+request deadline and cancellation handle; the shared queue reports the expiry of
+an attempt it holds, so a shared cooldown is named as such. Removing or changing
+the fallback identity cancels requests it is still carrying, without callbacks,
+as signing out does. Every request logs where its time
 went — queueing, token refresh, or the network — which is what makes a slow call
 diagnosable at all. See `docs/LIBRARY-DATA.md` for the measurements.
 
@@ -110,15 +113,20 @@ queued commands, so an old Play action cannot execute after timing out.
 
 Cached playlist pages retain their `snapshotId`. A stale page first requests
 `GET /playlists/{id}?fields=snapshot_id` with revalidation priority. Matching
-versions refresh the cache timestamp without fetching tracks. Known mismatches
-bypass the fresh-cache shortcut, and unknown versions fetch content. Metadata
+versions refresh the cache timestamp without fetching tracks. A newly found
+version is written to the library and detail copies of the playlist as well, so
+reopening it from the sidebar does not mistake the kept rows for outdated ones.
+Known mismatches bypass the fresh-cache shortcut, and unknown versions fetch
+content. Metadata
 failures leave the visible rows and stale timestamp intact. Switching pages or
 explicitly loading more cancels an outstanding version check.
 
 The optional ClientSetupPopup presents the dashboard link, live redirect URI,
 copy action, validated ID field and authorization status without a scroll view.
+Its status line shows the latest action result next to the live connection state.
 It uses the existing persisted `clientId` setting and PKCE authentication; no
-client secret is collected.
+client secret is collected. Saving there also updates the Settings Client ID
+draft, leaving the other unsaved Settings drafts alone.
 
 ## Runtime requirements
 

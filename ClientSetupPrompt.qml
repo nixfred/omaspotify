@@ -13,7 +13,11 @@ Item {
   property string result: ""
   readonly property bool valid: clientId.trim() === "" || /^[0-9a-f]{32}$/i.test(clientId.trim())
   readonly property string redirectUri: service ? service.auth.redirectUri : "http://127.0.0.1:8989/login"
+  readonly property string connection: !service ? ""
+    : service.auth.loggedIn ? "Selected Spotify app is connected."
+    : "Selected Spotify app is not connected yet."
   signal dismissed()
+  signal clientSaved()
   signal copyRequested(string text)
   signal dashboardRequested()
   implicitHeight: content.implicitHeight
@@ -21,8 +25,9 @@ Item {
   function saveClient() {
     if (!service || !valid) return false
     service.persistSettings({ clientId: clientId.trim().toLowerCase() })
-    result = clientId.trim() ? "Saved. Authorize this app below to connect your account."
+    result = clientId.trim() ? "Saved your Spotify app."
       : "Saved. The shared Spotify app is selected."
+    clientSaved()
     return true
   }
 
@@ -160,8 +165,7 @@ Item {
       width: parent.width
       text: prompt.service && prompt.service.auth.lastError ? prompt.service.auth.lastError
         : (prompt.service && prompt.service.auth.loginBusy ? "Finish authorization on Spotify's page."
-          : (prompt.service && prompt.service.auth.loggedIn && prompt.result
-            ? "Selected Spotify app is connected." : prompt.result))
+          : (prompt.result ? prompt.result + " " : "") + prompt.connection)
       color: prompt.service && prompt.service.auth.lastError ? Color.urgent : prompt.accent
       font.family: prompt.fontFamily
       font.pixelSize: Style.font.bodySmall

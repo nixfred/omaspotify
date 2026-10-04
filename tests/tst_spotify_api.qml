@@ -42,6 +42,14 @@ TestCase {
     function invalidateAccessToken() { testCase.sharedInvalidations++ }
   }
 
+  QtObject {
+    id: otherSharedAuth
+
+    property bool loggedIn: true
+    function withAccessToken(callback) { callback("other-shared-token", "") }
+    function invalidateAccessToken() {}
+  }
+
   Component {
     id: apiComponent
 
@@ -913,10 +921,78 @@ TestCase {
     complete(requests[0], 403)
     clock += 100
     api.expireTimedOutRequests(clock)
+    compare(results, [], "the shared attempt owns the deadline it inherited")
+    api.fallbackTransport.expireTimedOutRequests(clock)
     verify(requests[1].aborted)
     compare(results, [0])
     complete(requests[1], 200)
     compare(results, [0])
+    compare(api.timedJobs.length, 0)
+  }
+
+  function test_forwardedExpiryReportsSharedCooldown() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    api.request("GET", "/me/playlists", null, null, function() {},
+      { priority: "interactive", shared: true })
+    requests[0].retryAfter = "30"
+    complete(requests[0], 429)
+    var errors = []
+    api.request("GET", "/artists/catalog/albums", null, null,
+      function(status, payload, error) { errors.push(error) },
+      { priority: "interactive" })
+    complete(requests[1], 403)
+    compare(requests.length, 2, "the shared retry waits out the shared cooldown")
+    clock += Api.API_FOREGROUND_TIMEOUT_MS
+    api.expireTimedOutRequests(clock)
+    api.fallbackTransport.expireTimedOutRequests(clock)
+    compare(errors.length, 1)
+    verify(errors[0].indexOf("Spotify is busy") >= 0, errors[0])
+    api.expireTimedOutRequests(clock)
+    compare(errors.length, 1)
+    compare(api.timedJobs.length, 0)
+  }
+
+  function test_removingFallbackCancelsPendingRequest() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    var calls = 0
+    var handle = api.request("GET", "/artists/catalog/albums", null, null,
+      function() { calls++ }, { priority: "interactive" })
+    var crawl = api.request("GET", "/me/playlists", null, null,
+      function() { calls++ }, { priority: "background", shared: true })
+    complete(requests[0], 403)
+    api.fallbackAuth = null
+    wait(1)
+    api.abortRequest(handle)
+    api.abortRequest(crawl)
+    verify(requests[1].aborted, "Changing apps left the old shared request running")
+    verify(requests[2].aborted, "Changing apps left a shared crawl running")
+    compare(calls, 0)
+    compare(api.timedJobs.length, 0)
+    compare(api.requestsInFlight, 0)
+    api.expireTimedOutRequests(clock + Api.API_FOREGROUND_TIMEOUT_MS)
+    compare(calls, 0)
+  }
+
+  function test_changingFallbackCancelsForwardedRequest() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    var calls = 0
+    api.request("GET", "/artists/catalog/albums", null, null,
+      function() { calls++ }, { priority: "interactive" })
+    complete(requests[0], 403)
+    var shared = api.fallbackTransport
+    api.fallbackAuth = otherSharedAuth
+    verify(requests[1].aborted)
+    compare(shared.timedJobs.length, 0)
+    complete(requests[1], 200)
+    compare(calls, 0)
+    api.request("GET", "/me/playlists", null, null, function() { calls++ },
+      { priority: "interactive", shared: true })
+    compare(requests[2].authorization, "Bearer other-shared-token")
+    complete(requests[2], 200)
+    compare(calls, 1)
   }
 
 }

@@ -7,6 +7,7 @@ import QtQuick
 SpotifyTransport {
   id: root
   fallbackTransport: sharedTransport.item
+  onFallbackAuthChanged: cancelForwardedRequests()
 
   Loader {
     id: sharedTransport

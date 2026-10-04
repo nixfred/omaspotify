@@ -1800,10 +1800,16 @@ Item {
   // Every playlist edit comes back with a new snapshot id, so this is the one
   // place that knows the page we kept is now wrong.
   function updatePlaylistSnapshot(id, snapshotId) {
+    if (!id || !snapshotId) return
+    forgetCachedPlaylist({ id: String(id) })
+    propagatePlaylistSnapshot(id, snapshotId)
+  }
+
+  // Every copy of the playlist carries the version its kept rows are checked against.
+  function propagatePlaylistSnapshot(id, snapshotId) {
     var key = String(id || "")
     var snapshot = String(snapshotId || "")
     if (!key || !snapshot) return
-    forgetCachedPlaylist({ id: key })
     function updated(item) {
       if (!item || String(item.id || "") !== key) return item
       var copy = Api.shallowCopy(item)
@@ -2466,9 +2472,13 @@ Item {
           return
         }
         // No version means we cannot establish freshness. Fetch the rows.
-        var item = Object.assign({}, root.selectedPlaylist)
-        item.snapshotId = version
-        root.selectedPlaylist = item
+        if (version) {
+          root.propagatePlaylistSnapshot(playlistId, version)
+        } else {
+          var item = Object.assign({}, root.selectedPlaylist)
+          item.snapshotId = ""
+          root.selectedPlaylist = item
+        }
         root.loadPlaylistItems(false)
       }, true)
     if (handle.job) playlistItemsRequest = handle

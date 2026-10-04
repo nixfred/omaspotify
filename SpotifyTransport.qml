@@ -140,6 +140,8 @@ Item {
         var deadline = job.deadlineAt || job.activeDeadlineAt
         if (!deadline || current < deadline) continue
         var handle = job.handle
+        // The shared queue holds the same deadline and knows why its attempt waited.
+        if (handle && forwardedRequestLive(handle)) continue
         var xhr = handle ? handle.xhr : null
         var cooldownMs = Api.apiCooldownMs(current, rateLimitedUntil)
         var waitingForCooldown = cooldownMs > 0 && requestQueue.indexOf(job) >= 0
@@ -165,10 +167,28 @@ Item {
     pumpRequests()
   }
 
+  function transportAlive(transport) {
+    return !!transport && typeof transport.abortRequest === "function"
+  }
+
+  function forwardedRequestLive(handle) {
+    var forwarded = handle.forwardedRequest
+    return !!forwarded && forwarded.aborted !== true && !!forwarded.job
+      && forwarded.job.finished !== true && transportAlive(forwarded.owner)
+  }
+
   function abortRequest(handle) {
     if (!handle || handle.aborted) return
     if (handle.owner && handle.owner !== root) {
-      handle.owner.abortRequest(handle)
+      if (transportAlive(handle.owner)) {
+        handle.owner.abortRequest(handle)
+        return
+      }
+      // Its transport is gone; only the wire request is left to stop.
+      handle.aborted = true
+      var orphan = handle.xhr
+      handle.xhr = null
+      abortXhr(orphan)
       return
     }
     if (handle.forwardedRequest) abortRequest(handle.forwardedRequest)
@@ -473,6 +493,13 @@ Item {
     cancelSearch()
     if (fallbackTransport) fallbackTransport.cancelAll()
     cancellingAll = false
+  }
+
+  // Cancelled with the shared transport that carries them, as on sign-out.
+  function cancelForwardedRequests() {
+    var jobs = timedJobs.slice()
+    for (var i = 0; i < jobs.length; i++)
+      if (jobs[i].handle && jobs[i].handle.forwardedRequest) abortRequest(jobs[i].handle)
   }
 
   function cancelSearch() {
