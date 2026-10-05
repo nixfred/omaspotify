@@ -119,8 +119,11 @@ is always labelled with the version of the rows on screen, so an edit made
 before replacement rows arrive is sent against the version it was made on.
 Adding, removing or reordering stops any check, refetch or detail read of that
 playlist already in flight, and a successful edit does so again, so a reply
-read before the edit cannot replace the edited rows or the version it returned;
-a failed reorder still restores the rows it moved. A
+read before the edit cannot replace the edited rows or the version it returned.
+A view whose read was stopped then reads again at the depth it had: after a
+successful edit it reloads from the top, so rows from before an outside change
+are never kept or cached under the edit's version; after a failed edit the
+moved rows are restored and the version check resumes from the kept cache. A
 changed or newly known version is published to the open playlist and its
 library entry only after its first page of rows has replaced the old ones, so
 reopening it from the sidebar trusts those rows; a restore it wakes then pages

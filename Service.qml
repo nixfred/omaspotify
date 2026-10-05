@@ -1799,9 +1799,9 @@ Item {
 
   // Every playlist edit comes back with a new snapshot id, so this is the one
   // place that knows the page we kept is now wrong.
-  function updatePlaylistSnapshot(id, snapshotId) {
+  function updatePlaylistSnapshot(id, snapshotId, interrupted) {
     if (!id || !snapshotId) return
-    stopPlaylistReads(id)
+    stopPlaylistReads(id, interrupted)
     forgetCachedPlaylist({ id: String(id) })
     publishPlaylistVersion(id, snapshotId)
     if (detailItem && detailItem.type === "playlist")
@@ -1809,17 +1809,44 @@ Item {
   }
 
   // An edit outdates any read of the same playlist begun before it: landing
-  // later, it would replace the edited rows on screen and their version.
-  function stopPlaylistReads(id) {
+  // later, it would replace the edited rows on screen and their version. What
+  // was stopped, and to what depth, is kept so the edit can read it again.
+  function stopPlaylistReads(id, interrupted) {
     var key = String(id || "")
+    var result = interrupted
+      || ({ playlist: false, detail: false, playlistCount: 0, detailCount: 0 })
     if (selectedPlaylist && String(selectedPlaylist.id || "") === key
-        && playlistItems.length) stopPlaylistItems()
+        && playlistItems.length && (playlistItemsRequest || playlistItemsLoading)) {
+      result.playlist = true
+      result.playlistCount = Math.max(result.playlistCount, playlistRememberedItemCount)
+      stopPlaylistItems()
+      playlistRestoreTargetCount = 0
+    }
     if (detailItem && detailItem.type === "playlist"
-        && String(detailItem.id || "") === key && detailItems.length) {
+        && String(detailItem.id || "") === key && detailItems.length
+        && (detailLoading || detailRevalidating)) {
+      result.detail = true
+      result.detailCount = Math.max(result.detailCount, detailRememberedItemCount)
       detailSerial++
       detailLoading = false
       detailRevalidating = false
+      detailRestoreTargetCount = 0
     }
+    return result
+  }
+
+  // A view whose read an edit stopped reads the playlist again at its depth:
+  // from the top once the edit succeeded, or by resuming its version check
+  // from the kept rows when the edit failed.
+  function resumePlaylistReads(playlist, interrupted, edited) {
+    var key = String(playlist && playlist.id || "")
+    if (interrupted.playlist && selectedPlaylist && String(selectedPlaylist.id || "") === key) {
+      if (edited) reloadSelectedPlaylist(interrupted.playlistCount)
+      else openPlaylist(playlistById(key) || selectedPlaylist, interrupted.playlistCount)
+    }
+    if (interrupted.detail && detailItem && detailItem.type === "playlist"
+        && String(detailItem.id || "") === key)
+      openDetail(detailItem, "", interrupted.detailCount)
   }
 
   function playlistWithVersion(item, id, snapshot) {
@@ -2612,16 +2639,23 @@ Item {
         || !playlist || !playlist.id
         || playlistActionBusy) return
     playlistActionBusy = true
-    stopPlaylistReads(playlist.id)
+    var interrupted = stopPlaylistReads(playlist.id)
     spotifyApi.request("POST", "/playlists/" + encodeURIComponent(String(playlist.id)) + "/items",
       null, { uris: [item.uri] }, function(status, payload, error) {
         root.playlistActionBusy = false
-        if (error) { root.fail(error); return }
-        root.updatePlaylistSnapshot(playlist.id, payload && payload.snapshot_id)
+        if (error) {
+          root.resumePlaylistReads(playlist, interrupted, false)
+          root.fail(error)
+          return
+        }
+        root.updatePlaylistSnapshot(playlist.id, payload && payload.snapshot_id, interrupted)
         root.succeed("Added to " + String(playlist.name || "playlist"))
-        if (root.selectedPlaylist && root.selectedPlaylist.id === playlist.id)
+        root.resumePlaylistReads(playlist, interrupted, true)
+        if (!interrupted.playlist && root.selectedPlaylist
+            && root.selectedPlaylist.id === playlist.id)
           root.loadPlaylistItems(false, true)
-        if (root.detailItem && root.detailItem.id === playlist.id) root.openDetail(root.detailItem)
+        if (!interrupted.detail && root.detailItem && root.detailItem.id === playlist.id)
+          root.openDetail(root.detailItem)
       })
   }
 
@@ -2746,39 +2780,47 @@ Item {
     })
   }
 
-  function reloadPlaylist(playlist) {
+  function reloadPlaylist(playlist, interrupted) {
     if (!playlist) return
     forgetCachedPlaylist(playlist)
-    var restoredDetailItemCount = detailRememberedItemCount
-    if (selectedPlaylist && selectedPlaylist.id === playlist.id) {
-      var restoredItemCount = playlistRememberedItemCount
-      stopPlaylistItems()
-      playlistRestoreTargetCount = restoredItemCount
-      playlistFromCache = false
-      playlistItems = []
-      playlistItemsNext = ""
-      playlistItemsError = ""
-      playlistItemsStatus = 0
-      loadPlaylistItems(false, true)
-    }
+    var restoredDetailItemCount = Math.max(detailRememberedItemCount,
+      interrupted ? interrupted.detailCount : 0)
+    if (selectedPlaylist && selectedPlaylist.id === playlist.id)
+      reloadSelectedPlaylist(Math.max(playlistRememberedItemCount,
+        interrupted ? interrupted.playlistCount : 0))
     if (detailItem && detailItem.type === "playlist" && detailItem.id === playlist.id)
       openDetail(detailItem, "", restoredDetailItemCount)
+  }
+
+  function reloadSelectedPlaylist(restoredItemCount) {
+    stopPlaylistItems()
+    playlistRestoreTargetCount = restoredItemCount
+    playlistFromCache = false
+    playlistItems = []
+    playlistItemsNext = ""
+    playlistItemsError = ""
+    playlistItemsStatus = 0
+    loadPlaylistItems(false, true)
   }
 
   function removePlaylistItem(item, index, playlist) {
     var target = playlist || selectedPlaylist
     if (!item || !item.uri || !playlistEditable(target) || playlistActionBusy) return
     playlistActionBusy = true
-    stopPlaylistReads(target.id)
+    var interrupted = stopPlaylistReads(target.id)
     var body = { items: [{ uri: item.uri }] }
     if (target.snapshotId) body.snapshot_id = target.snapshotId
     spotifyApi.request("DELETE", "/playlists/" + encodeURIComponent(String(target.id)) + "/items",
       null, body, function(status, payload, error) {
         root.playlistActionBusy = false
-        if (error) { root.fail(error); return }
-        root.updatePlaylistSnapshot(target.id, payload && payload.snapshot_id)
+        if (error) {
+          root.resumePlaylistReads(target, interrupted, false)
+          root.fail(error)
+          return
+        }
+        root.updatePlaylistSnapshot(target.id, payload && payload.snapshot_id, interrupted)
         root.succeed("Removed from playlist")
-        root.reloadPlaylist(target)
+        root.reloadPlaylist(target, interrupted)
       })
   }
 
@@ -2801,7 +2843,7 @@ Item {
       : Api.playlistReorderBody(sourceIndex, destinationIndex, length,
         target ? target.snapshotId : "")
     if (!body) return
-    stopPlaylistReads(playlistId)
+    var interrupted = stopPlaylistReads(playlistId)
 
     var sourcePosition = orderingItems.length
       ? Api.playlistPositionAt(orderingItems, sourceIndex) : sourceIndex
@@ -2827,10 +2869,12 @@ Item {
           if (detailMatches && root.detailItem && root.detailItem.type === "playlist"
               && String(root.detailItem.id || "") === playlistId)
             root.detailItems = previousDetailItems
+          root.resumePlaylistReads(target, interrupted, false)
           root.fail(error)
           return
         }
-        root.updatePlaylistSnapshot(target.id, payload && payload.snapshot_id)
+        root.updatePlaylistSnapshot(target.id, payload && payload.snapshot_id, interrupted)
+        root.resumePlaylistReads(target, interrupted, true)
         root.succeed("Playlist order updated")
       })
   }
