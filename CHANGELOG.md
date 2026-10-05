@@ -11,7 +11,9 @@
   pressed during a long wait can no longer go off after it has timed out.
 - With your own Spotify developer app set up, its requests no longer wait out
   refusals aimed at the shared app every install uses, and the other way
-  round. Each app keeps its own queue and cooldown.
+  round. Each app keeps its own queue and cooldown. Changing the Client ID in
+  Settings takes effect without restarting the shell, and the new app no
+  longer inherits the previous app's wait.
 - An optional guide to setting up your own Spotify developer app is now
   offered on the login page, in Settings, and when the shared app runs out of
   quota. It links to the developer dashboard, copies the exact redirect URI,
