@@ -37,6 +37,13 @@ ShellRoot {
       items.push({ track: { id: id, name: id, uri: "spotify:track:" + id, artists: [] } })
     return { items: items, offset: offset, next: next || null }
   }
+  function distinctRows(prefix, count) {
+    var items = []
+    for (var i = 0; i < count; i++)
+      items.push({ id: prefix + "-" + i, uri: "spotify:track:" + prefix + "-" + i,
+        playlistPosition: i })
+    return items
+  }
   function keptRows(id, count) {
     var items = []
     for (var i = 0; i < count; i++)
@@ -67,7 +74,9 @@ ShellRoot {
         test.requests.push(xhr)
         return xhr
       }
-      var names = ["unchanged", "changed", "unknown", "failed", "deep", "large", "edited"]
+      var names = ["unchanged", "changed", "unknown", "failed", "deep", "large", "edited",
+        "reordered", "rolledback", "removed", "added"]
+      var editable = ["edited", "reordered", "rolledback", "removed", "added"]
       var cache = { version: Api.QUERY_CACHE_VERSION, order: [], entries: {} }
       var entries = []
       for (var i = 0; i < names.length; i++) {
@@ -85,11 +94,18 @@ ShellRoot {
             items: keptRows("repeat", 250), next: "" }, 200)
         }
         else if (names[i] === "edited") data.items = keptRows("old-edited", 3)
+        else if (editable.indexOf(names[i]) >= 0) data.items = distinctRows(names[i], 3)
         cache.entries[key] = { updatedAt: Date.now() - 600000, data: data }
         entries.push({ type: "playlist", id: names[i], name: names[i],
           uri: "spotify:playlist:" + names[i], snapshotId: "v1",
-          collaborative: names[i] === "edited" })
+          collaborative: editable.indexOf(names[i]) >= 0 })
       }
+      var racedKey = Api.queryCacheKey(["detail", "playlist", "detail-raced", ""])
+      cache.order.push(racedKey)
+      cache.entries[racedKey] = { updatedAt: Date.now() - 600000, data: {
+        item: { kind: "context", type: "playlist", id: "detail-raced", name: "detail-raced",
+          uri: "spotify:playlist:detail-raced", snapshotId: "v1", collaborative: true },
+        items: distinctRows("detail-raced", 3), next: "" } }
       var detailKey = Api.queryCacheKey(["detail", "playlist", "detailed", ""])
       cache.order.push(detailKey)
       cache.entries[detailKey] = { updatedAt: Date.now(), data: Api.cappedPageSnapshot({
@@ -287,6 +303,90 @@ ShellRoot {
         && service.detailItems[249].playlistPosition === 249,
         "A later playlist detail page was not read")
       expect(service.detailNext.indexOf("offset=250") >= 0, "Detail paging stopped early")
+
+
+      // An edit stops older reads of the same playlist, so a late check or
+      // refetch cannot replace the edited rows or the version the edit returned.
+      function writes(id, method) {
+        return requestsFor(id).filter(function(xhr) { return xhr.method === method })
+      }
+      service.openPlaylist(library("reordered"))
+      pump()
+      complete(reads("reordered")[0], 200, { snapshot_id: "v2" })
+      pump()
+      var refetch = reads("reordered")[1]
+      service.requestPlaylistItemReorder(0, 2)
+      expect(refetch.aborted, "A reorder left an older refetch running")
+      var put = writes("reordered", "PUT")[0]
+      expect(JSON.parse(put.body).snapshot_id === "v1", "The reorder used a version it does not show")
+      var edited = service.playlistItems.map(function(row) { return row.id }).join()
+      complete(put, 200, { snapshot_id: "v3" })
+      complete(refetch, 200, rows("new-reordered"))
+      expect(service.playlistItems.map(function(row) { return row.id }).join() === edited,
+        "A late refetch replaced the reordered rows")
+      expect(service.selectedPlaylist.snapshotId === "v3" && library("reordered").snapshotId === "v3",
+        "A late refetch replaced the version the edit returned")
+
+      service.openPlaylist(library("rolledback"))
+      pump()
+      var check = reads("rolledback")[0]
+      service.requestPlaylistItemReorder(0, 1)
+      expect(check.aborted, "A reorder left an older version check running")
+      complete(writes("rolledback", "PUT")[0], 500, { error: { status: 500, message: "No" } })
+      complete(check, 200, { snapshot_id: "v2" })
+      pump()
+      expect(reads("rolledback").length === 1, "A late check started a refetch after the edit")
+      expect(service.playlistItems.map(function(row) { return row.id }).join()
+        === "rolledback-0,rolledback-1,rolledback-2", "A failed reorder was not rolled back")
+      expect(service.selectedPlaylist.snapshotId === "v1", "A failed reorder changed the version")
+
+      service.openPlaylist(library("removed"))
+      pump()
+      check = reads("removed")[0]
+      service.removePlaylistItem(service.playlistItems[0], 0)
+      expect(check.aborted, "A removal left an older version check running")
+      complete(writes("removed", "DELETE")[0], 200, { snapshot_id: "v3" })
+      complete(check, 200, { snapshot_id: "v1" })
+      expect(service.selectedPlaylist.snapshotId === "v3", "The removal's version was lost")
+      expect(reads("removed").length === 2 && reads("removed")[1].url.indexOf("/items") >= 0
+        && service.playlistItems.length === 0 && service.playlistItemsLoading,
+        "The removal did not reload the playlist")
+      complete(reads("removed")[1], 200, rows("after-removal"))
+      expect(service.playlistItems[0].id === "after-removal", "The reloaded rows were not shown")
+
+      service.openPlaylist(library("added"))
+      pump()
+      complete(reads("added")[0], 200, { snapshot_id: "v2" })
+      pump()
+      refetch = reads("added")[1]
+      service.addItemToPlaylist({ type: "track", uri: "spotify:track:added-song" },
+        service.selectedPlaylist)
+      expect(refetch.aborted, "An add left an older refetch running")
+      complete(writes("added", "POST")[0], 500, { error: { status: 500, message: "No" } })
+      complete(refetch, 200, rows("new-added"))
+      expect(service.playlistItems.length === 3 && service.playlistItems[0].id === "added-0"
+        && !service.playlistItemsLoading && service.selectedPlaylist.snapshotId === "v1",
+        "A failed add lost the kept rows or their version")
+
+      service.openDetail({ kind: "context", type: "playlist", id: "detail-raced",
+        name: "detail-raced", uri: "spotify:playlist:detail-raced", snapshotId: "v1",
+        collaborative: true })
+      pump()
+      requests.filter(function(xhr) {
+        return xhr.url.indexOf("/me/library/contains") >= 0 && !xhr.aborted
+          && xhr.readyState !== XMLHttpRequest.DONE
+      }).forEach(function(xhr) { complete(xhr, 200, [false]) })
+      var metadata = reads("detail-raced")[0]
+      expect(service.detailRevalidating, "The stale detail page was not being checked")
+      service.requestPlaylistItemReorder(0, 1, service.detailItem)
+      expect(!service.detailRevalidating, "A detail reorder left an older detail read current")
+      complete(writes("detail-raced", "PUT")[0], 200, { snapshot_id: "v3" })
+      complete(metadata, 200, { type: "playlist", id: "detail-raced", name: "detail-raced",
+        uri: "spotify:playlist:detail-raced", snapshot_id: "v2",
+        items: { items: rows("new-detail").items, offset: 0, next: null } })
+      expect(service.detailItems[0].id === "detail-raced-1"
+        && service.detailItem.snapshotId === "v3" && !service.detailLoading,
+        "A late detail read replaced the reordered rows or their version")
 
       service.api.cancelAll()
       console.log("PLAYLIST_VERSIONS_PASS")

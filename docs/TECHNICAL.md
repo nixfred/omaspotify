@@ -116,7 +116,11 @@ Cached playlist pages retain their `snapshotId`. A stale page first requests
 `GET /playlists/{id}?fields=snapshot_id` with revalidation priority. Matching
 versions refresh the cache timestamp without fetching tracks. The open playlist
 is always labelled with the version of the rows on screen, so an edit made
-before replacement rows arrive is sent against the version it was made on. A
+before replacement rows arrive is sent against the version it was made on.
+Adding, removing or reordering stops any check, refetch or detail read of that
+playlist already in flight, and a successful edit does so again, so a reply
+read before the edit cannot replace the edited rows or the version it returned;
+a failed reorder still restores the rows it moved. A
 changed or newly known version is published to the open playlist and its
 library entry only after its first page of rows has replaced the old ones, so
 reopening it from the sidebar trusts those rows; a restore it wakes then pages

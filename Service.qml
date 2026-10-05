@@ -1801,10 +1801,25 @@ Item {
   // place that knows the page we kept is now wrong.
   function updatePlaylistSnapshot(id, snapshotId) {
     if (!id || !snapshotId) return
+    stopPlaylistReads(id)
     forgetCachedPlaylist({ id: String(id) })
     publishPlaylistVersion(id, snapshotId)
     if (detailItem && detailItem.type === "playlist")
       detailItem = playlistWithVersion(detailItem, id, String(snapshotId))
+  }
+
+  // An edit outdates any read of the same playlist begun before it: landing
+  // later, it would replace the edited rows on screen and their version.
+  function stopPlaylistReads(id) {
+    var key = String(id || "")
+    if (selectedPlaylist && String(selectedPlaylist.id || "") === key
+        && playlistItems.length) stopPlaylistItems()
+    if (detailItem && detailItem.type === "playlist"
+        && String(detailItem.id || "") === key && detailItems.length) {
+      detailSerial++
+      detailLoading = false
+      detailRevalidating = false
+    }
   }
 
   function playlistWithVersion(item, id, snapshot) {
@@ -2597,6 +2612,7 @@ Item {
         || !playlist || !playlist.id
         || playlistActionBusy) return
     playlistActionBusy = true
+    stopPlaylistReads(playlist.id)
     spotifyApi.request("POST", "/playlists/" + encodeURIComponent(String(playlist.id)) + "/items",
       null, { uris: [item.uri] }, function(status, payload, error) {
         root.playlistActionBusy = false
@@ -2753,6 +2769,7 @@ Item {
     var target = playlist || selectedPlaylist
     if (!item || !item.uri || !playlistEditable(target) || playlistActionBusy) return
     playlistActionBusy = true
+    stopPlaylistReads(target.id)
     var body = { items: [{ uri: item.uri }] }
     if (target.snapshotId) body.snapshot_id = target.snapshotId
     spotifyApi.request("DELETE", "/playlists/" + encodeURIComponent(String(target.id)) + "/items",
@@ -2784,6 +2801,7 @@ Item {
       : Api.playlistReorderBody(sourceIndex, destinationIndex, length,
         target ? target.snapshotId : "")
     if (!body) return
+    stopPlaylistReads(playlistId)
 
     var sourcePosition = orderingItems.length
       ? Api.playlistPositionAt(orderingItems, sourceIndex) : sourceIndex
