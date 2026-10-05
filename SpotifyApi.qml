@@ -1,5 +1,3 @@
-pragma ComponentBehavior: Bound
-
 import QtQuick
 
 // Separate transports prevent the shipped app's quota from delaying a
