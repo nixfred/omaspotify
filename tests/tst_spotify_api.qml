@@ -26,6 +26,8 @@ TestCase {
   QtObject {
     id: fakeAuth
 
+    property string resolvedClientId: "old-app"
+
     function withAccessToken(callback) {
       callback(testCase.accessToken, testCase.accessTokenError)
     }
@@ -103,6 +105,7 @@ TestCase {
   }
 
   function init() {
+    fakeAuth.resolvedClientId = "old-app"
     requests = []
     clock = 1000
     tokenInvalidations = 0
@@ -1025,4 +1028,76 @@ TestCase {
     compare(calls, 1)
   }
 
+  function test_newPersonalIdentityDoesNotInheritSharedCooldown() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.request("GET", "/me", null, null, function() {})
+    requests[0].retryAfter = "120"
+    complete(requests[0], 429)
+    verify(api.rateLimitedUntil > clock)
+    api.cancelAll() // Service also cancels when the old identity logs out.
+    fakeAuth.resolvedClientId = "personal-app"
+    api.request("GET", "/me/playlists", null, null, function() {})
+    compare(requests.length, 2, "a new authorized app reaches the wire immediately")
+    compare(api.rateLimitedUntil, 0)
+    compare(api.interactiveLimitedUntil, 0)
+    compare(api.rateLimitedSince, 0)
+    compare(api.cooldownProbeUsed, false)
+    compare(api.restrictInFlight, false)
+  }
+
+  function test_identitySwitchClearsBackgroundPacingButKeepsSharedQuota() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    verify(api.fallbackTransport)
+    var shared = api.fallbackTransport
+    shared.rateLimitedUntil = clock + 120000
+    shared.backgroundRefusals = 3
+    api.backgroundSuspendedUntil = clock + 120000
+    api.backgroundRefusals = 4
+    api.lastBackgroundStartedAt = clock
+    api.lastInteractiveStartedAt = clock
+    fakeAuth.resolvedClientId = "personal-app"
+    compare(api.backgroundSuspendedUntil, 0)
+    compare(api.backgroundRefusals, 0)
+    compare(api.lastBackgroundStartedAt, 0)
+    compare(api.lastInteractiveStartedAt, 0)
+    compare(api.fallbackTransport, shared)
+    compare(shared.rateLimitedUntil, clock + 120000)
+    compare(shared.backgroundRefusals, 3)
+    api.request("GET", "/me/albums", null, null, function() {},
+      { priority: "background" })
+    compare(requests.length, 1, "the new app has no inherited background pause")
+  }
+
+  function test_identitySwitchCancelsActiveAndQueuedOldRequests() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    var limit = fillEverySlot(api)
+    var calls = 0
+    api.request("PUT", "/me/player/play", null, null, function() { calls++ })
+    fakeAuth.resolvedClientId = "personal-app"
+    compare(requests.length, limit, "cancelling cannot dispatch the queued mutation")
+    compare(api.requestQueue.length, 0)
+    compare(api.timedJobs.length, 0)
+    compare(api.requestsInFlight, 0)
+    for (var i = 0; i < limit; i++) {
+      verify(requests[i].aborted)
+      complete(requests[i], 200)
+    }
+    compare(calls, 0)
+    api.request("GET", "/me/playlists", null, null, function() {})
+    compare(requests.length, limit + 1)
+  }
+
+  function test_tokenRefreshAndUnchangedIdentityKeepQuota() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.request("GET", "/me", null, null, function() {})
+    requests[0].retryAfter = "120"
+    complete(requests[0], 429)
+    var until = api.rateLimitedUntil
+    accessToken = "refreshed-token"
+    fakeAuth.resolvedClientId = "old-app"
+    api.request("GET", "/me/playlists", null, null, function() {})
+    compare(api.rateLimitedUntil, until)
+    compare(requests.length, 1, "refreshing a token cannot bypass the app's quota")
+  }
 }

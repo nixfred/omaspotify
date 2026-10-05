@@ -42,6 +42,26 @@ if rg -i 'ReferenceError|TypeError|binding loop|Cannot assign|Unable to assign|F
 fi
 echo 'Quickshell app smoke test passed.'
 
+cp "$source_root/tests/integration/ClientIdentity.qml" "$test_root/app/shell.qml"
+# The identity fixture uses synthetic access tokens; its startup lookup must
+# never read the user's keyring or initiate a real token refresh.
+mkdir -p "$test_root/identity-bin"
+printf '#!/bin/sh\nexit 1\n' > "$test_root/identity-bin/secret-tool"
+chmod +x "$test_root/identity-bin/secret-tool"
+env PATH="$test_root/identity-bin:$PATH" QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic NO_AT_BRIDGE=1 XDG_STATE_HOME="$test_root/state" \
+  timeout 15s dbus-run-session -- qs --no-color -p "$test_root/app" > "$test_root/identity-output" 2>&1 || {
+  cat "$test_root/identity-output"
+  exit 1
+}
+rg -q CLIENT_IDENTITY_PASS "$test_root/identity-output" || {
+  cat "$test_root/identity-output"
+  exit 1
+}
+if rg -i 'ReferenceError|TypeError|binding loop|Cannot assign|Unable to assign|Failed to load configuration' "$test_root/identity-output"; then
+  exit 1
+fi
+echo 'Quickshell Settings client identity checks passed.'
+
 cp "$source_root/tests/integration/PlaylistVersions.qml" "$test_root/app/shell.qml"
 env QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic NO_AT_BRIDGE=1 XDG_STATE_HOME="$test_root/state" \
   timeout 15s dbus-run-session -- qs --no-color -p "$test_root/app" > "$test_root/versions-output" 2>&1 || {

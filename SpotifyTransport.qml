@@ -56,6 +56,33 @@ Item {
   property var xhrFactory: function() { return new XMLHttpRequest() }
   property var now: function() { return Date.now() }
 
+  // A token refresh keeps the same app's quota. Changing the app in Settings
+  // must instead cancel its work and start with that app's own pacing state.
+  readonly property string quotaIdentity: auth && auth.resolvedClientId !== undefined
+    ? String(auth.resolvedClientId) : ""
+  property string previousQuotaIdentity: ""
+  property bool quotaIdentityReady: false
+  Component.onCompleted: {
+    previousQuotaIdentity = quotaIdentity
+    quotaIdentityReady = true
+  }
+  onQuotaIdentityChanged: {
+    if (!quotaIdentityReady || quotaIdentity === previousQuotaIdentity) return
+    previousQuotaIdentity = quotaIdentity
+    cancelAll()
+    backgroundPaceTimer.stop()
+    rateLimitTimer.stop()
+    rateLimitedUntil = 0
+    interactiveLimitedUntil = 0
+    rateLimitedSince = 0
+    cooldownProbeUsed = false
+    restrictInFlight = false
+    backgroundRefusals = 0
+    backgroundSuspendedUntil = 0
+    lastBackgroundStartedAt = 0
+    lastInteractiveStartedAt = 0
+  }
+
   function removeTimedJob(job) {
     var next = []
     for (var i = 0; i < timedJobs.length; i++)
