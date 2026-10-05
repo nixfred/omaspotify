@@ -1836,17 +1836,18 @@ Item {
   }
 
   // A view whose read an edit stopped reads the playlist again at its depth:
-  // from the top once the edit succeeded, or by resuming its version check
-  // from the kept rows when the edit failed.
+  // from the top once the edit succeeded, or by checking the rows still on
+  // screen again when the edit failed.
   function resumePlaylistReads(playlist, interrupted, edited) {
     var key = String(playlist && playlist.id || "")
     if (interrupted.playlist && selectedPlaylist && String(selectedPlaylist.id || "") === key) {
       if (edited) reloadSelectedPlaylist(interrupted.playlistCount)
-      else openPlaylist(playlistById(key) || selectedPlaylist, interrupted.playlistCount)
+      else openPlaylist(playlistById(key) || selectedPlaylist, interrupted.playlistCount,
+        { item: selectedPlaylist, items: playlistItems, next: playlistItemsNext })
     }
     if (interrupted.detail && detailItem && detailItem.type === "playlist"
         && String(detailItem.id || "") === key)
-      openDetail(detailItem, "", interrupted.detailCount)
+      openDetail(detailItem, "", interrupted.detailCount, edited ? undefined : detailSnapshot)
   }
 
   function playlistWithVersion(item, id, snapshot) {
@@ -2459,7 +2460,8 @@ Item {
     loadLibraryCollection(value, append === true)
   }
 
-  function openPlaylist(playlist, restoredItemCount) {
+  // Rows still on screen can stand in for the cache; they are always checked.
+  function openPlaylist(playlist, restoredItemCount, onScreen) {
     if (!playlist || !playlist.id) return
     succeed("")
     stopPlaylistItems()
@@ -2468,7 +2470,7 @@ Item {
     playlistItemsError = ""
     playlistItemsStatus = 0
     playlistCacheKey = playlistCacheKeyFor(playlist)
-    var kept = pageCache.read(playlistCacheKey)
+    var kept = onScreen || pageCache.read(playlistCacheKey)
     var storedVersion = String(kept && kept.item && kept.item.snapshotId || "")
     var knownVersion = String(playlist.snapshotId || "")
     selectedPlaylist = kept ? playlistWithVersion(playlist, playlist.id, storedVersion)
@@ -2481,17 +2483,19 @@ Item {
     playlistRestoreTargetCount = Math.max(playlistRestoreTargetCount,
       playlistItems.length)
     var knownChange = storedVersion && knownVersion && storedVersion !== knownVersion
-    if (!knownChange && pageCache.freshness(playlistCacheKey) === "fresh") {
+    if (!onScreen && !knownChange && pageCache.freshness(playlistCacheKey) === "fresh") {
       if (Api.playlistRestoreShouldContinue(playlistItems.length,
           playlistRestoreTargetCount, playlistItemsNext)) loadPlaylistItems(true)
       else playlistRestoreTargetCount = 0
       return
     }
-    if (kept && storedVersion && !knownChange) checkPlaylistVersion(kept)
+    if (kept && storedVersion && !knownChange) checkPlaylistVersion(kept, !!onScreen)
     else loadPlaylistItems(false, false, kept ? knownVersion : undefined)
   }
 
-  function checkPlaylistVersion(kept) {
+  // Confirmed rows from the cache are kept fresh again; rows that were only
+  // on screen are not written, since the cache never held them.
+  function checkPlaylistVersion(kept, onScreen) {
     var playlistId = String(selectedPlaylist.id)
     var expected = dataSerial
     var serial = playlistItemsSerial
@@ -2508,7 +2512,7 @@ Item {
         }
         var version = String(payload && payload.snapshot_id || "")
         if (version && version === String(kept.item.snapshotId || "")) {
-          pageCache.write(cacheKey, kept)
+          if (!onScreen) pageCache.write(cacheKey, kept)
           if (Api.playlistRestoreShouldContinue(root.playlistItems.length,
               root.playlistRestoreTargetCount, root.playlistItemsNext))
             root.loadPlaylistItems(true)
@@ -2915,7 +2919,7 @@ Item {
     })
   }
 
-  function openDetail(item, requestedArtistQuery, restoredItemCount) {
+  function openDetail(item, requestedArtistQuery, restoredItemCount, onScreen) {
     if (!item || !item.id || item.kind !== "context") return
     var type = String(item.type || "")
     if (["artist", "album", "playlist", "show", "audiobook"].indexOf(type) < 0) return
@@ -2949,8 +2953,8 @@ Item {
     // Draw the answer we already have, then decide whether to ask for another.
     // An artist page is six requests, so one opened twice is worth keeping.
     detailCacheKey = detailCacheKeyFor(item, initialArtistQuery)
-    var kept = pageCache.read(detailCacheKey)
-    var held = pageCache.freshness(detailCacheKey)
+    var kept = onScreen || pageCache.read(detailCacheKey)
+    var held = onScreen ? "stale" : pageCache.freshness(detailCacheKey)
     if (kept) applyDetailSnapshot(kept, item)
     detailFromCache = !!kept
     detailRevalidating = !!kept

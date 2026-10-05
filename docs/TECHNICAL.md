@@ -123,7 +123,8 @@ read before the edit cannot replace the edited rows or the version it returned.
 A view whose read was stopped then reads again at the depth it had: after a
 successful edit it reloads from the top, so rows from before an outside change
 are never kept or cached under the edit's version; after a failed edit the
-moved rows are restored and the version check resumes from the kept cache. A
+moved rows are restored and stay on screen, cached or not, while their version
+is checked again; rows that were only on screen are never written to the cache. A
 changed or newly known version is published to the open playlist and its
 library entry only after its first page of rows has replaced the old ones, so
 reopening it from the sidebar trusts those rows; a restore it wakes then pages

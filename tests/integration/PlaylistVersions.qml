@@ -454,6 +454,103 @@ ShellRoot {
       expect(service.detailItems[0].id === "post-detail" && service.detailItem.snapshotId === "v3"
         && !service.detailLoading, "The detail page did not show the rows after the edit")
 
+      // A failed edit with nothing in the cache, during a deeper restore:
+      // the rows on screen stay and are checked again instead of blanked.
+      service.playlists = service.playlists.concat([
+        { type: "playlist", id: "unsaved", name: "unsaved", uri: "spotify:playlist:unsaved",
+          snapshotId: "v1", collaborative: true },
+        { type: "playlist", id: "unsaved-fail", name: "unsaved-fail",
+          uri: "spotify:playlist:unsaved-fail", snapshotId: "v1", collaborative: true }])
+      function failEditWithoutCache(id) {
+        service.openPlaylist(library(id), 120)
+        pump()
+        complete(reads(id)[0], 200, page(id + "-row", 0, 50,
+          "https://api.spotify.com/v1/playlists/" + id + "/items?offset=50&limit=50"))
+        pump()
+        var restoring = reads(id)[1]
+        expect(restoring && restoring.url.indexOf("offset=50") >= 0,
+          "The remembered depth was not being restored")
+        var shown = ids()
+        service.requestPlaylistItemReorder(0, 1)
+        expect(restoring.aborted, "A reorder left the restore running")
+        complete(writes(id, "PUT")[0], 409, { error: { status: 409, message: "Conflict" } })
+        complete(restoring, 200, page("late-" + id, 50, 50))
+        expect(ids() === shown && service.playlistItems.length === 50
+          && !service.playlistItemsLoading,
+          "A failed edit without a cache entry blanked the rows on screen")
+        expect(service.selectedPlaylist.snapshotId === "v1", "A failed edit changed the version")
+        pump()
+        var check = reads(id)[2]
+        expect(check && check.url.indexOf("fields=snapshot_id") >= 0,
+          "A failed edit did not check the rows on screen again")
+        return check
+      }
+      complete(failEditWithoutCache("unsaved"), 200, { snapshot_id: "v1" })
+      pump()
+      var resumedPage = reads("unsaved")[3]
+      expect(resumedPage && resumedPage.url.indexOf("offset=50") >= 0,
+        "The confirmed rows did not resume the remembered depth")
+      complete(resumedPage, 200, page("unsaved-row", 50, 50,
+        "https://api.spotify.com/v1/playlists/unsaved/items?offset=100&limit=50"))
+      pump()
+      complete(reads("unsaved")[4], 200, page("unsaved-row", 100, 20))
+      expect(service.playlistItems.length === 120, "The remembered depth was not reached")
+      service.keepPlaylistPage()
+      service.openPlaylist(library("unsaved"))
+      pump()
+      expect(reads("unsaved").length === 6,
+        "Rows kept only on screen were cached as fresh")
+
+      complete(failEditWithoutCache("unsaved-fail"), 500,
+        { error: { status: 500, message: "Server error" } })
+      pump()
+      expect(service.playlistItems.length === 50 && !service.playlistItemsLoading
+        && reads("unsaved-fail").length === 3,
+        "A failed check after a failed edit lost the rows on screen")
+      service.openPlaylist(library("unsaved-fail"))
+      pump()
+      expect(service.playlistItems.length === 0 && service.playlistItemsLoading,
+        "Rows kept only on screen were cached")
+
+      // The same in a playlist detail page whose cache entry is gone.
+      service.openDetail({ kind: "context", type: "playlist", id: "detail-unsaved",
+        name: "detail-unsaved", uri: "spotify:playlist:detail-unsaved", snapshotId: "v1",
+        collaborative: true }, "", 120)
+      pump()
+      answerLibraryChecks()
+      complete(reads("detail-unsaved")[0], 200, { type: "playlist", id: "detail-unsaved",
+        name: "detail-unsaved", uri: "spotify:playlist:detail-unsaved", snapshot_id: "v1",
+        collaborative: true, items: page("detail-unsaved-row", 0, 50,
+          "https://api.spotify.com/v1/playlists/detail-unsaved/items?offset=50&limit=50") })
+      pump()
+      answerLibraryChecks()
+      var detailRestore = reads("detail-unsaved")[1]
+      expect(detailRestore && detailRestore.url.indexOf("offset=50") >= 0 && service.detailLoading,
+        "The detail depth was not being restored")
+      service.requestPlaylistItemReorder(0, 1, service.detailItem)
+      complete(writes("detail-unsaved", "PUT")[0], 500, { error: { status: 500, message: "No" } })
+      complete(detailRestore, 200, page("late-detail-unsaved", 50, 50))
+      expect(service.detailItems.length === 50 && service.detailItems[0].id === "detail-unsaved-row"
+        && service.detailRevalidating && !service.detailLoading,
+        "A failed edit without a detail cache entry blanked the detail rows")
+      pump()
+      answerLibraryChecks()
+      var detailCheck = reads("detail-unsaved")[2]
+      expect(detailCheck && detailCheck.url.indexOf("offset=") < 0,
+        "A failed detail edit did not check the rows on screen again")
+      complete(detailCheck, 200, { type: "playlist", id: "detail-unsaved",
+        name: "detail-unsaved", uri: "spotify:playlist:detail-unsaved", snapshot_id: "v1",
+        collaborative: true, items: page("detail-checked", 0, 50,
+          "https://api.spotify.com/v1/playlists/detail-unsaved/items?offset=50&limit=50") })
+      pump()
+      answerLibraryChecks()
+      var detailPages = reads("detail-unsaved")
+      expect(detailPages.length === 4 && detailPages[3].url.indexOf("offset=50") >= 0,
+        "The detail check did not resume the remembered depth")
+      complete(detailPages[3], 200, page("detail-checked", 50, 50))
+      expect(service.detailItems.length === 100 && service.detailItems[0].id === "detail-checked",
+        "The checked detail rows were not shown at depth")
+
       service.api.cancelAll()
       console.log("PLAYLIST_VERSIONS_PASS")
       Qt.quit()
