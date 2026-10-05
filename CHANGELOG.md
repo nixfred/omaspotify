@@ -9,6 +9,18 @@
   pauses for at least a minute instead of retrying. It keeps the library you
   already had and no longer replaces the status of your last action. A Play
   pressed during a long wait can no longer go off after it has timed out.
+- With your own Spotify developer app set up, its requests no longer wait out
+  refusals aimed at the shared app every install uses, and the other way
+  round. Each app keeps its own queue and cooldown.
+- An optional guide to setting up your own Spotify developer app is now
+  offered on the login page, in Settings, and when the shared app runs out of
+  quota. It links to the developer dashboard, copies the exact redirect URI,
+  checks the Client ID before saving it, and starts authorization. It never
+  asks for the Client Secret, and the shared app keeps working if you skip it.
+- A playlist you have opened is drawn at once when you open it again. After
+  five minutes, a small check asks Spotify whether it changed, and its songs
+  are only downloaded again if it did. If the check fails, the rows you had
+  stay on screen.
 - On a Sonos, shuffle and repeat-one can now be on together. Turning shuffle
   on during repeat-one did nothing, and switching repeat to repeat-one turned
   shuffle off.
