@@ -45,6 +45,15 @@ TestCase {
   }
 
   QtObject {
+    id: shippedAuth
+
+    property string resolvedClientId: "old-app"
+    property bool loggedIn: true
+    function withAccessToken(callback) { callback("shipped-token", "") }
+    function invalidateAccessToken() {}
+  }
+
+  QtObject {
     id: otherSharedAuth
 
     property bool loggedIn: true
@@ -1099,5 +1108,79 @@ TestCase {
     api.request("GET", "/me/playlists", null, null, function() {})
     compare(api.rateLimitedUntil, until)
     compare(requests.length, 1, "refreshing a token cannot bypass the app's quota")
+  }
+
+  function sharedToPersonal(fallbackFirst) {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.request("GET", "/me", null, null, function() {})
+    requests[0].retryAfter = "120"
+    complete(requests[0], 429)
+    var until = api.rateLimitedUntil
+    verify(until > clock)
+    if (fallbackFirst) api.fallbackAuth = shippedAuth
+    fakeAuth.resolvedClientId = "personal-app"
+    if (!fallbackFirst) api.fallbackAuth = shippedAuth
+    var shared = api.fallbackTransport
+    verify(shared)
+    compare(api.rateLimitedUntil, 0)
+    compare(shared.rateLimitedUntil, until, "the shipped app's Retry-After was forgotten")
+    api.request("GET", "/me/playlists", null, null, function() {})
+    compare(requests.length, 2, "the personal app is not held by the shipped app's pause")
+    compare(requests[1].authorization, "Bearer mock-token")
+    complete(requests[1], 200)
+    var errors = []
+    api.request("GET", "/artists/catalog/albums", null, null,
+      function(status, payload, error) { errors.push(error) })
+    complete(requests[2], 403)
+    compare(requests.length, 3, "the first fallback ignored the shipped app's cooldown")
+    var crawled = 0
+    api.request("GET", "/me/playlists", null, null, function() { crawled++ },
+      { priority: "background", shared: true })
+    compare(requests.length, 3)
+    clock = Math.max(until, shared.backgroundSuspendedUntil)
+    shared.pumpRequests()
+    verify(requests.length > 3, "the shared work never resumed after the cooldown")
+    for (var i = 3; i < requests.length; i++)
+      compare(requests[i].authorization, "Bearer shipped-token")
+  }
+
+  function test_sharedToPersonalKeepsTheShippedCooldown() { sharedToPersonal(false) }
+  function test_sharedToPersonalKeepsTheShippedCooldownWhenFallbackArrivesFirst() {
+    sharedToPersonal(true)
+  }
+
+  function personalToShared(fallbackFirst) {
+    fakeAuth.resolvedClientId = "personal-app"
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = shippedAuth
+    api.request("GET", "/me/playlists", null, null, function() {},
+      { priority: "background", shared: true })
+    compare(requests[0].authorization, "Bearer shipped-token")
+    requests[0].retryAfter = "120"
+    complete(requests[0], 429)
+    var until = api.fallbackTransport.rateLimitedUntil
+    var suspended = api.fallbackTransport.backgroundSuspendedUntil
+    verify(until > clock)
+    compare(api.rateLimitedUntil, 0)
+    if (fallbackFirst) api.fallbackAuth = null
+    fakeAuth.resolvedClientId = "old-app"
+    if (!fallbackFirst) api.fallbackAuth = null
+    wait(1)
+    compare(api.fallbackTransport, null)
+    compare(api.rateLimitedUntil, until, "the shipped app's live cooldown was dropped")
+    compare(api.backgroundSuspendedUntil, suspended)
+    compare(api.backgroundRefusals, 1)
+    api.request("GET", "/me/albums", null, null, function() {},
+      { priority: "background" })
+    compare(requests.length, 1, "the shipped app burst into its own Retry-After window")
+    clock = suspended
+    api.pumpRequests()
+    compare(requests.length, 2)
+    compare(requests[1].authorization, "Bearer mock-token")
+  }
+
+  function test_personalToSharedImportsTheChildCooldown() { personalToShared(false) }
+  function test_personalToSharedImportsTheChildCooldownWhenFallbackLeavesFirst() {
+    personalToShared(true)
   }
 }

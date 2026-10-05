@@ -17,6 +17,8 @@ SpotifyTransport {
         xhrFactory: root.xhrFactory
         activeTimeoutMs: root.activeTimeoutMs
         slowRequestMs: root.slowRequestMs
+        pacingHome: root
+        pacingPeer: root
       }
     }
   }

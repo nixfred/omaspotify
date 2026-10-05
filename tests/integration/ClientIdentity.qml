@@ -70,8 +70,9 @@ ShellRoot {
       service.api.request("GET", "/me/playlists", null, null, function() {})
       check(requests.length === 2, "The newly authorized Settings app stayed blocked")
       service.applySettings({ clientId: "" })
-      check(requests[1].aborted && service.api.rateLimitedUntil === 0,
-        "Returning to the shared app retained the personal app's work")
+      check(requests[1].aborted, "Returning to the shared app retained the personal app's work")
+      check(service.api.fallbackTransport === null && service.api.rateLimitedUntil === 121000,
+        "Returning to the shared app forgot that app's live cooldown")
       service.api.cancelAll()
       console.log("CLIENT_IDENTITY_PASS")
       Qt.quit()

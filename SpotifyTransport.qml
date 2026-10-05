@@ -62,25 +62,68 @@ Item {
     ? String(auth.resolvedClientId) : ""
   property string previousQuotaIdentity: ""
   property bool quotaIdentityReady: false
+  // Pacing belongs to the app, not to the transport carrying it: the shipped
+  // app moves between the primary and the shared child as Settings change.
+  property var pacingMemory: ({})
+  property var pacingHome: root
+  property var pacingPeer: fallbackTransport
   Component.onCompleted: {
     previousQuotaIdentity = quotaIdentity
+    restorePacing(quotaIdentity)
     quotaIdentityReady = true
   }
+  Component.onDestruction: rememberPacing(previousQuotaIdentity)
   onQuotaIdentityChanged: {
     if (!quotaIdentityReady || quotaIdentity === previousQuotaIdentity) return
+    rememberPacing(previousQuotaIdentity)
     previousQuotaIdentity = quotaIdentity
     cancelAll()
+    restorePacing(quotaIdentity)
+  }
+
+  function pacingState() {
+    return {
+      rateLimitedUntil: rateLimitedUntil,
+      interactiveLimitedUntil: interactiveLimitedUntil,
+      rateLimitedSince: rateLimitedSince,
+      cooldownProbeUsed: cooldownProbeUsed,
+      restrictInFlight: restrictInFlight,
+      backgroundRefusals: backgroundRefusals,
+      backgroundSuspendedUntil: backgroundSuspendedUntil,
+      lastBackgroundStartedAt: lastBackgroundStartedAt,
+      lastInteractiveStartedAt: lastInteractiveStartedAt
+    }
+  }
+
+  function rememberPacing(identity) {
+    if (!identity || !pacingHome) return
+    var memory = Object.assign({}, pacingHome.pacingMemory)
+    memory[identity] = pacingState()
+    pacingHome.pacingMemory = memory
+  }
+
+  // A transport still carrying the app knows its latest state; otherwise the
+  // last state handed back for that app applies.
+  function restorePacing(identity) {
+    var peer = pacingPeer
+    var state = null
+    if (identity && peer && peer !== root && transportAlive(peer)
+        && peer.quotaIdentityReady === true && peer.previousQuotaIdentity === identity)
+      state = peer.pacingState()
+    else if (identity && pacingHome)
+      state = pacingHome.pacingMemory[identity] || null
+    state = state || ({})
     backgroundPaceTimer.stop()
     rateLimitTimer.stop()
-    rateLimitedUntil = 0
-    interactiveLimitedUntil = 0
-    rateLimitedSince = 0
-    cooldownProbeUsed = false
-    restrictInFlight = false
-    backgroundRefusals = 0
-    backgroundSuspendedUntil = 0
-    lastBackgroundStartedAt = 0
-    lastInteractiveStartedAt = 0
+    rateLimitedUntil = state.rateLimitedUntil || 0
+    interactiveLimitedUntil = state.interactiveLimitedUntil || 0
+    rateLimitedSince = state.rateLimitedSince || 0
+    cooldownProbeUsed = state.cooldownProbeUsed === true
+    restrictInFlight = state.restrictInFlight === true
+    backgroundRefusals = state.backgroundRefusals || 0
+    backgroundSuspendedUntil = state.backgroundSuspendedUntil || 0
+    lastBackgroundStartedAt = state.lastBackgroundStartedAt || 0
+    lastInteractiveStartedAt = state.lastInteractiveStartedAt || 0
   }
 
   function removeTimedJob(job) {

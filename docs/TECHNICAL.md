@@ -84,7 +84,9 @@ counted per developer account. On a 429 the affected transport honours
 requests doubles and stays wide for the rest of the run. One page you are
 waiting on may try once during a cooldown, in case the refusal has slack in it;
 after being refused itself it waits its turn. Personal and fallback transports
-never share cooldown or pacing state. Fallback attempts retain the original
+never share cooldown or pacing state. That state follows the Client ID rather
+than the transport, so when Settings move the shipped app between the primary
+and fallback transports its live `Retry-After` moves with it. Fallback attempts retain the original
 request deadline and cancellation handle; the shared queue reports the expiry of
 an attempt it holds, so a shared cooldown is named as such. Removing or changing
 the fallback identity cancels requests it is still carrying, without callbacks,
