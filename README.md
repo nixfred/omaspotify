@@ -221,8 +221,10 @@ requests.
 The local Connect authorization remains separate. The personal and shipped apps
 have separate request queues, cooldowns, and concurrency limits: a refusal from
 the shipped app cannot stall requests through your personal app.
-Changing the Client ID in Settings cancels the previous app's requests and clears
-its delay without restarting the shell. Refreshing a token keeps that app's quota.
+Changing the Client ID in Settings cancels the previous app's requests without
+restarting the shell. A different app does not inherit the previous app's delay,
+but an app you return to keeps any `Retry-After` it is still serving. Refreshing a
+token keeps that app's quota.
 
 Playlists you open are cached on disk (up to 200 loaded rows per page, 16 pages);
 Load More continues after the cached rows of a longer playlist.
