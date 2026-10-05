@@ -2654,12 +2654,7 @@ Item {
         }
         root.updatePlaylistSnapshot(playlist.id, payload && payload.snapshot_id, interrupted)
         root.succeed("Added to " + String(playlist.name || "playlist"))
-        root.resumePlaylistReads(playlist, interrupted, true)
-        if (!interrupted.playlist && root.selectedPlaylist
-            && root.selectedPlaylist.id === playlist.id)
-          root.loadPlaylistItems(false, true)
-        if (!interrupted.detail && root.detailItem && root.detailItem.id === playlist.id)
-          root.openDetail(root.detailItem)
+        root.reloadPlaylist(playlist, interrupted)
       })
   }
 

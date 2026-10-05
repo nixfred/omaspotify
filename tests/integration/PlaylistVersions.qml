@@ -551,6 +551,79 @@ ShellRoot {
       expect(service.detailItems.length === 100 && service.detailItems[0].id === "detail-checked",
         "The checked detail rows were not shown at depth")
 
+      // A successful add shows no rows from before it under its version while
+      // its refresh is pending, so a later failed edit has nothing stale to keep.
+      service.playlists = service.playlists.concat([
+        { type: "playlist", id: "readded", name: "readded", uri: "spotify:playlist:readded",
+          snapshotId: "v1", collaborative: true },
+        { type: "playlist", id: "readded-fail", name: "readded-fail",
+          uri: "spotify:playlist:readded-fail", snapshotId: "v1", collaborative: true }])
+      function addThenFailEdit(id) {
+        service.openPlaylist(library(id))
+        pump()
+        complete(reads(id)[0], 200, { items: distinctRows(id, 3).map(function(row) {
+          return { track: { id: row.id, name: row.id, uri: row.uri, artists: [] } }
+        }), offset: 0, next: null })
+        expect(ids() === id + "-0," + id + "-1," + id + "-2" && service.playlistItemsNext === "",
+          "The complete playlist was not shown")
+        service.addItemToPlaylist({ type: "track", uri: "spotify:track:" + id + "-song" },
+          service.selectedPlaylist)
+        complete(writes(id, "POST")[0], 201, { snapshot_id: "v2" })
+        expect(service.selectedPlaylist.snapshotId === "v2" && service.playlistItems.length === 0
+          && service.playlistItemsLoading,
+          "Rows from before the add were shown under its version")
+        var refresh = reads(id)[1]
+        expect(refresh && refresh.url.indexOf("offset=") < 0, "The add did not refresh the rows")
+        service.requestPlaylistItemReorder(0, 1)
+        expect(writes(id, "PUT").length === 0, "A reorder was offered without rows")
+        service.addItemToPlaylist({ type: "track", uri: "spotify:track:" + id + "-second" },
+          service.selectedPlaylist)
+        complete(writes(id, "POST")[1], 409, { error: { status: 409, message: "Conflict" } })
+        expect(!refresh.aborted && reads(id).length === 2 && service.playlistItems.length === 0,
+          "A failed edit replaced the pending refresh with rows from before the add")
+        return refresh
+      }
+      complete(addThenFailEdit("readded"), 200, { items: [
+        { track: { id: "readded-song", name: "song", uri: "spotify:track:readded-song",
+          artists: [] } }].concat(distinctRows("readded", 3).map(function(row) {
+          return { track: { id: row.id, name: row.id, uri: row.uri, artists: [] } }
+        })), offset: 0, next: null })
+      expect(ids() === "readded-song,readded-0,readded-1,readded-2"
+        && service.selectedPlaylist.snapshotId === "v2" && !service.playlistItemsLoading,
+        "The refresh after the add was not shown")
+
+      complete(addThenFailEdit("readded-fail"), 500,
+        { error: { status: 500, message: "Server error" } })
+      expect(service.playlistItems.length === 0 && !service.playlistItemsLoading
+        && service.playlistItemsError !== "",
+        "A failed refresh after the add brought back rows from before it")
+      service.openPlaylist(library("readded-fail"))
+      pump()
+      expect(reads("readded-fail").length === 3 && reads("readded-fail")[2].url.indexOf("/items") >= 0
+        && service.playlistItemsLoading, "Rows from before the add were trusted on reopening")
+
+      // The detail page of the same kind is emptied and read again too.
+      service.openDetail({ kind: "context", type: "playlist", id: "detail-readded",
+        name: "detail-readded", uri: "spotify:playlist:detail-readded", snapshotId: "v1",
+        collaborative: true })
+      pump()
+      answerLibraryChecks()
+      complete(reads("detail-readded")[0], 200, { type: "playlist", id: "detail-readded",
+        name: "detail-readded", uri: "spotify:playlist:detail-readded", snapshot_id: "v1",
+        collaborative: true, items: page("detail-readded-row", 0, 3) })
+      service.addItemToPlaylist({ type: "track", uri: "spotify:track:detail-song" },
+        service.detailItem)
+      complete(writes("detail-readded", "POST")[0], 201, { snapshot_id: "v2" })
+      expect(service.detailItems.length === 0 && service.detailLoading,
+        "Detail rows from before the add were shown under its version")
+      pump()
+      answerLibraryChecks()
+      complete(reads("detail-readded")[1], 200, { type: "playlist", id: "detail-readded",
+        name: "detail-readded", uri: "spotify:playlist:detail-readded", snapshot_id: "v2",
+        collaborative: true, items: page("detail-added", 0, 4) })
+      expect(service.detailItems.length === 4 && service.detailItem.snapshotId === "v2",
+        "The detail refresh after the add was not shown")
+
       service.api.cancelAll()
       console.log("PLAYLIST_VERSIONS_PASS")
       Qt.quit()

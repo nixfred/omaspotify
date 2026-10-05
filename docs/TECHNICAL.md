@@ -120,7 +120,10 @@ before replacement rows arrive is sent against the version it was made on.
 Adding, removing or reordering stops any check, refetch or detail read of that
 playlist already in flight, and a successful edit does so again, so a reply
 read before the edit cannot replace the edited rows or the version it returned.
-A view whose read was stopped then reads again at the depth it had: after a
+A successful add or removal always empties the open playlist and reloads it
+from the top at its depth, so rows from before the edit are never shown under
+the version it returned. A view whose read was stopped then reads again at the
+depth it had: after a
 successful edit it reloads from the top, so rows from before an outside change
 are never kept or cached under the edit's version; after a failed edit the
 moved rows are restored and stay on screen, cached or not, while their version
