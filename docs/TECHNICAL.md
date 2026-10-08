@@ -351,7 +351,9 @@ those songs, and the detail page explains that instead of showing an empty list.
 
 The idle scheduler checks completed playlists at most once an hour unless the
 library reports a changed version (foreground freshness remains five minutes).
-It compares `snapshot_id`, resumes matching partial pages, and
+It compares `snapshot_id` (asking for `snapshot_id,images`, so each list keeps the
+address of its cover at the detail page's 256 px size; no image is downloaded),
+resumes matching partial pages, and
 verifies the version after the final page. A changed version restarts fetching;
 a changed final version discards the mixed copy. Duplicate and unavailable
 track positions are retained through normalization/cursors. Empty playlists you

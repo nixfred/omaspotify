@@ -236,12 +236,13 @@ check preserves the visible cache and leaves it stale for the next visit.
 For a library-wide cache, open **Playlists → Cache** and turn **Idle caching** on
 (or enable “Cache playlist songs while idle” in the plugin settings). Close the
 panel to let it work: it fills first pages before deeper pages, one request at a
-time, with at least three seconds between requests. It caches song lists, not
-audio; accessible lists resume after restart. Spotify version checks skip
-unchanged lists; changed lists need a new download because Spotify has no
-incremental song-diff endpoint. Rate limits pause warming; personal apps do not
-fall back to the shared app during warming. After a restart it looks up your
-account by itself, without the panel being opened.
+time, with at least three seconds between requests. It caches song lists and
+the address of each list's cover, not audio or artwork; accessible lists resume
+after restart. Spotify version checks skip unchanged lists; changed lists need a
+new download because Spotify has no incremental song-diff endpoint. Rate limits
+pause warming; personal apps do not fall back to the shared app during warming.
+After a restart it looks up your account by itself, without the panel being
+opened.
 
 The separate library cache holds up to 512 playlists, 50,000 rows in total,
 10,000 per playlist and 32 MiB of estimated data. Rows are stored compactly: in

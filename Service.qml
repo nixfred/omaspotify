@@ -3050,7 +3050,7 @@ Item {
           && payload.snapshot_id === kept.item.snapshotId) {
         root.detailLoading = false
         root.detailRevalidating = false
-        playlistLibraryCache.keep(kept)
+        playlistLibraryCache.keep(playlistLibraryCache.withCover(kept, normalized ? normalized.imageUrl : ""))
         if (Api.playlistRestoreShouldContinue(root.detailItems.length,
             root.detailRestoreTargetCount, root.detailNext)) root.loadMoreDetail()
         else root.detailRestoreTargetCount = 0

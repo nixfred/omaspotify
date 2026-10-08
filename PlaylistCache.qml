@@ -207,6 +207,15 @@ Item {
     return true
   }
 
+  // The header is stored at the size the detail page draws it; the same cover keeps the stored form.
+  function withCover(data, cover) {
+    if (!cover || cover === data.item.imageUrl) return data
+    var next = Api.shallowCopy(data)
+    next.item = Api.shallowCopy(data.item)
+    next.item.imageUrl = cover
+    return next
+  }
+
   function drop(id) {
     var key = String(id || "")
     // Edits cancel any in-flight read, including metadata/final verification.
@@ -350,7 +359,7 @@ Item {
       work = { item: item, kept: kept, stage: "metadata" }
       if (kept && kept.next && validated[item.id] === kept.item.snapshotId
           && (!item.snapshotId || item.snapshotId === kept.item.snapshotId))
-        work.stage = "items"
+        work = { item: kept.item, kept: kept, stage: "items" }
     }
     var id = String(work.item.id)
     if (work.stage === "items") {
@@ -391,8 +400,9 @@ Item {
       })
     } else {
       var verifying = work.stage === "verify"
-      send("/playlists/" + encodeURIComponent(id), { fields: "snapshot_id" }, function(payload) {
+      send("/playlists/" + encodeURIComponent(id), { fields: "snapshot_id,images" }, function(payload) {
         var version = String(payload && payload.snapshot_id || "")
+        var cover = Api.imageFor(payload && payload.images, 256)
         var kept = root.work.kept
         if (!version) {
           root.retryAt[id] = root.now() + 300000
@@ -403,7 +413,7 @@ Item {
         if (verifying) {
           if (version === root.work.item.snapshotId) {
             kept.verified = true
-            root.keep(kept)
+            root.keep(root.withCover(kept, cover))
           }
           else root.drop(id)
           root.work = null
@@ -412,9 +422,10 @@ Item {
         root.validated[id] = version
         var current = Api.shallowCopy(root.work.item)
         current.snapshotId = version
+        if (cover) current.imageUrl = cover
         if (kept && version === kept.item.snapshotId && !kept.next) {
           kept.verified = true
-          root.keep(kept)
+          root.keep(root.withCover(kept, cover))
           root.work = null
         } else root.work = { item: current, kept: kept && version === kept.item.snapshotId ? kept : null, stage: "items" }
       })

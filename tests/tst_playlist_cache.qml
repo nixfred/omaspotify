@@ -84,6 +84,12 @@ TestCase {
     }).items
   }
   function track(id) { return { id: id, name: id, uri: "spotify:track:" + id, artists: [] } }
+  // Spotify's mosaic playlist covers come in these three sizes.
+  function mosaic(name) {
+    return [640, 300, 60].map(function(size) {
+      return { url: "https://i.scdn.co/image/" + name + "-" + size, width: size, height: size }
+    })
+  }
   function snapshot(id, count, next, version) {
     var rows = []
     for (var i = 0; i < count; i++) { var row = track("same"); row.playlistPosition = i; rows.push(row) }
@@ -266,6 +272,44 @@ TestCase {
     compare(Object.keys(c.entries), ["b"], "only the expired entry gives its room back")
     compare(c.read("b").items.length, 1)
     compare(changedSpy.count, 1, "removing expired rows must be saved")
+  }
+  function test_coverIsKeptAtTheDetailSize() {
+    var c = cache()
+    c.tick()
+    compare(requests[0].query.fields, "snapshot_id,images", "the version check asks for the cover too")
+    answer({ snapshot_id: "v1", images: mosaic("a") })
+    step(c); answer({ items: [{ track: track("one") }], offset: 0, next: null })
+    step(c); answer({ snapshot_id: "v1", images: mosaic("a") })
+    compare(c.read("a").item.imageUrl, "https://i.scdn.co/image/a-300")
+    changedSpy.target = c; recheckedSpy.target = c
+    changedSpy.clear(); recheckedSpy.clear()
+    var held = c.read("a")
+    clock += c.recheckMs + 1
+    compare(step(c).path, "/playlists/a"); answer({ snapshot_id: "v1", images: mosaic("a") })
+    compare(changedSpy.count, 0, "the same cover rewrote the song file")
+    compare(recheckedSpy.count, 1)
+    verify(c.read("a").item === held.item, "the same cover replaced the stored header")
+    clock += c.recheckMs + 1
+    compare(step(c).path, "/playlists/a"); answer({ snapshot_id: "v1", images: mosaic("b") })
+    compare(changedSpy.count, 1, "a new cover must be saved")
+    compare(c.read("a").item.imageUrl, "https://i.scdn.co/image/b-300")
+    compare(c.read("a").item.snapshotId, "v1")
+    verify(c.read("a").items === held.items, "a new cover replaced the songs")
+    compare(c.read("a").next, "")
+  }
+  function test_coverFollowsDeepPagesAndCursor() {
+    var c = cache()
+    c.tick(); answer({ snapshot_id: "v1", images: mosaic("a") })
+    step(c); answer({ items: [{ track: track("one") }], offset: 0, next: "https://api.spotify.com/v1/playlists/a/items?offset=1" })
+    compare(step(c).path, "https://api.spotify.com/v1/playlists/a/items?offset=1")
+    answer({ items: [{ track: track("two") }], offset: 1, next: "https://api.spotify.com/v1/playlists/a/items?offset=2" })
+    compare(c.read("a").item.imageUrl, "https://i.scdn.co/image/a-300", "a resumed page dropped the cover")
+    c.pause()
+    compare(step(c).path, "/playlists/a"); answer({ snapshot_id: "v1", images: mosaic("b") })
+    compare(step(c).path, "https://api.spotify.com/v1/playlists/a/items?offset=2", "a new cover restarted the download")
+    answer({ items: [{ track: track("three") }], offset: 2, next: null })
+    compare(c.read("a").item.imageUrl, "https://i.scdn.co/image/b-300")
+    compare(c.read("a").items.map(function(row) { return row.id }), ["one", "two", "three"])
   }
   function test_entryAndByteBudgets() {
     var c = cache(); c.maxEntries = 1; c.keep(snapshot("a", 1)); verify(!c.keep(snapshot("b", 1)))

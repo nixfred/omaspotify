@@ -15,6 +15,12 @@ ShellRoot {
     function onChanged() { test.songFileWrites++ }
   }
   function expect(value, message) { if (!value) throw new Error(message) }
+  // Spotify's mosaic playlist covers come in these three sizes.
+  function mosaic(name) {
+    return [640, 300, 60].map(function(size) {
+      return { url: "https://i.scdn.co/image/" + name + "-" + size, width: size, height: size }
+    })
+  }
   function playlistRequests() { return requests.filter(function(x) { return x.url.indexOf("/playlists/warm") >= 0 }) }
   function last() { var rows = playlistRequests(); return rows[rows.length - 1] }
   function lastFor(id) {
@@ -74,12 +80,16 @@ ShellRoot {
       expect(service.cachePlaylistsOnIdle, "real Settings enable warming")
       service.playlistCache.tick()
       expect(last().url.indexOf("/playlists/warm?") >= 0, "warm metadata sent")
-      complete(200, { snapshot_id: "v1" }); step()
+      expect(decodeURIComponent(last().url).indexOf("fields=snapshot_id,images") >= 0,
+        "the version check did not ask for the cover: " + last().url)
+      complete(200, { snapshot_id: "v1", images: mosaic("cover") }); step()
       expect(last().url.indexOf("/playlists/warm/items") >= 0, "warm rows sent")
       var rows = []
       for (var i = 0; i < 50; i++) rows.push({ track: { id: "row" + i, name: "Track", uri: "spotify:track:row" + i, artists: [] } })
       complete(200, { items: rows, offset: 0, next: null }); step()
-      complete(200, { snapshot_id: "v1" })
+      complete(200, { snapshot_id: "v1", images: mosaic("cover") })
+      expect(service.playlistCache.read("warm").item.imageUrl === "https://i.scdn.co/image/cover-300",
+        "warming did not keep the 300 px cover")
       var count = playlistRequests().length
       service.setUiVisible("test", true)
       service.openPlaylist(service.playlists[0])
@@ -88,6 +98,9 @@ ShellRoot {
       expect(playlistRequests().length === count, "fresh opening sends no Spotify read")
       service.openDetail(service.playlists[0])
       expect(service.detailItems.length === 50 && !service.detailLoading, "detail shares warmed rows")
+      expect(service.detailItem.imageUrl === "https://i.scdn.co/image/cover-300",
+        "a fresh warmed detail page drew a low-resolution cover: " + service.detailItem.imageUrl)
+      expect(playlistRequests().length === count, "a fresh warmed detail page asked Spotify")
       // A stale copy stays readable, and unchanged metadata costs one request.
       clock += 301000
       service.api.cancelAll()
@@ -104,15 +117,27 @@ ShellRoot {
       service.openDetail(service.playlists[0]); step()
       writes = songFileWrites
       complete(200, { id: "warm", type: "playlist", name: "Fixture", snapshot_id: "v1",
-        owner: { id: "warming-account" }, tracks: { total: 50 },
-        images: [{ url: "https://i.scdn.co/image/cover-640", width: 640, height: 640 },
-          { url: "https://i.scdn.co/image/cover-300", width: 300, height: 300 },
-          { url: "https://i.scdn.co/image/cover-60", width: 60, height: 60 }] }, lastFor("warm"))
+        owner: { id: "warming-account" }, tracks: { total: 50 }, images: mosaic("cover") }, lastFor("warm"))
       expect(service.detailItem.imageUrl === "https://i.scdn.co/image/cover-300",
         "an unchanged warmed playlist kept a low-resolution cover: " + service.detailItem.imageUrl)
       expect(service.detailItem.snapshotId === "v1" && service.detailItems.length === 50
         && !service.detailLoading, "the confirmed detail page lost its warmed songs or version")
       expect(songFileWrites === writes, "a confirmed detail page rewrote the whole song file")
+      // A new cover on the same version replaces the header and is kept with the songs.
+      clock += 301000
+      service.openDetail(service.playlists[0]); step()
+      complete(200, { id: "warm", type: "playlist", name: "Fixture", snapshot_id: "v1",
+        owner: { id: "warming-account" }, tracks: { total: 50 }, images: mosaic("new-cover") }, lastFor("warm"))
+      expect(service.detailItem.imageUrl === "https://i.scdn.co/image/new-cover-300",
+        "a changed cover did not refresh the header")
+      expect(service.detailItem.snapshotId === "v1" && service.detailItems.length === 50
+        && service.detailNext === "", "a changed cover lost the songs, version or cursor")
+      expect(songFileWrites === writes + 1, "a changed cover was not saved")
+      var asked = playlistRequests().length
+      service.openDetail(service.playlists[0])
+      expect(service.detailItem.imageUrl === "https://i.scdn.co/image/new-cover-300"
+        && service.detailItems.length === 50 && playlistRequests().length === asked,
+        "the saved cover was not drawn on a fresh open")
       // Spotify hides the songs of a playlist you only follow: that is a message,
       // not an empty list to keep and show without it next time.
       var followed = { id: "followed", type: "playlist", kind: "context", name: "Followed",
@@ -123,7 +148,7 @@ ShellRoot {
       expect(service.detailMessage === Api.playlistItemsHiddenMessage(), "hidden songs are explained")
       service.keepDetailPage()
       expect(!service.playlistCache.read("followed"), "hidden songs were cached as an empty list")
-      var asked = requests.length
+      asked = requests.length
       service.openDetail(followed); step()
       expect(requests.length === asked + 1 && service.detailLoading, "a hidden list was drawn from the cache")
       complete(200, { id: "followed", type: "playlist", name: "Followed", snapshot_id: "f1",
