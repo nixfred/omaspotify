@@ -16,23 +16,45 @@ ShellRoot {
   function writes() {
     return requests.filter(function(xhr) { return xhr.method === "PUT" })
   }
+  function live(path) {
+    return requests.filter(function(xhr) {
+      return !xhr.aborted && xhr.method === "GET" && xhr.url.indexOf(path) >= 0
+    })
+  }
   function complete(xhr, status, payload) {
     xhr.status = status
     xhr.responseText = JSON.stringify(payload)
     xhr.readyState = XMLHttpRequest.DONE
     xhr.onreadystatechange()
   }
+  function speaker(id) {
+    return { device: { id: id, name: "Speaker", type: "Speaker", is_active: true,
+      is_restricted: false }, is_playing: false }
+  }
   function reset() {
     service.api.cancelAll()
+    service.api.rateLimitedUntil = 0
     service.clearPendingPlayback()
     service.remotePlaybackWaiters = []
     service.remotePlaybackLoading = false
     service.remotePlayback = null
+    service.devicesLoading = false
+    service.deviceLoadWaiters = []
+    service.apiDevices = []
     service.devices = []
+    service.localDeviceId = ""
     service.selectedDeviceId = ""
     service.selectedDeviceExplicit = false
     service.lastError = ""
     requests = []
+  }
+  function runningLocalReceiver(active) {
+    service.daemon.credentialsAvailable = true
+    service.daemon.binaryAvailable = true
+    service.daemon.unitAvailable = true
+    service.daemon.serviceActive = true
+    service.localDeviceId = "local"
+    service.devices = [{ id: "local", local: true, active: active, restricted: false }]
   }
   Timer {
     interval: 50
@@ -80,19 +102,39 @@ ShellRoot {
         service.loadPlaybackState()
         service.playItem(song("unknown"), null, "", "")
         expect(writes().length === 0, "Unknown receiver was chosen before the refresh")
-        complete(requests[0], 200, { device: { id: "fresh-speaker", name: "Speaker",
-          type: "Speaker", is_active: true, is_restricted: false }, is_playing: false })
+        expect(live("/me/player").length === 1, "Click left more than one receiver read")
+        complete(live("/me/player")[0], 200, speaker("fresh-speaker"))
         expect(writes().length === 1
           && writes()[0].url.indexOf("device_id=fresh-speaker") >= 0,
           "Fresh receiver was not used by the waiting click")
         reset()
+        // A library crawl's 30-second pause holds the status poll in the queue.
+        // The click's own read goes out now and finds the speaker in use.
+        service.api.rateLimitedUntil = Date.now() + 30000
+        service.loadPlaybackState()
+        expect(requests.length === 0, "Status poll ignored the background pause")
+        service.playItem(song("cooled"), null, "", "")
+        expect(live("/me/player").length === 1,
+          "Click waited behind a status poll held by the background pause")
+        complete(live("/me/player")[0], 200, speaker("cooled-speaker"))
+        expect(writes().length === 1
+          && writes()[0].url.indexOf("device_id=cooled-speaker") >= 0
+          && JSON.parse(writes()[0].body).uris[0] === "spotify:track:cooled",
+          "Paused status poll moved the click off the speaker in use")
+        reset()
+        // A failed probe must not hand the song to a ready local receiver.
+        runningLocalReceiver(false)
+        service.loadPlaybackState()
+        service.playItem(song("unconfirmed"), null, "", "")
+        complete(live("/me/player")[0], 503,
+          { error: { status: 503, message: "Service unavailable" } })
+        expect(writes().length === 0, "Failed receiver probe moved playback to this computer")
+        expect(!service.pendingPlaybackBody && service.lastError.length > 0,
+          "Failed receiver probe gave no actionable error")
+        reset()
         // A known running local receiver can use Connect immediately while
         // its optional socket is unavailable; no fixed five-second wait.
-        service.daemon.credentialsAvailable = true
-        service.daemon.binaryAvailable = true
-        service.daemon.unitAvailable = true
-        service.daemon.serviceActive = true
-        service.devices = [{ id: "local", local: true, active: true, restricted: false }]
+        runningLocalReceiver(true)
         service.selectedDeviceId = "local"
         service.selectedDeviceExplicit = true
         service.playItem(song("local"), null, "", "")
@@ -110,13 +152,42 @@ ShellRoot {
         stage = 2
         interval = 2400
         restart()
-      } else {
+      } else if (stage === 2) {
         expect(!service.remotePlaybackLoading && !service.pendingPlaybackBody,
           "A stalled receiver refresh kept the click pending")
-        expect(requests[0].aborted, "Stalled receiver refresh was not cancelled")
+        expect(requests.every(function(xhr) { return xhr.aborted }),
+          "Stalled receiver refresh was not cancelled")
         expect(Date.now() - probeStarted < 3500, "Receiver probe exceeded its short deadline")
         expect(writes().length === 0, "Failed probe sent playback to an unknown receiver")
         expect(service.lastError.length > 0, "Unavailable playback gave no actionable error")
+        reset()
+        // The receiver from an earlier run is still listed while a start is
+        // in progress. The unit becomes active before Spotify registers it.
+        runningLocalReceiver(false)
+        service.daemon.serviceActive = false
+        service.daemon.busy = true
+        service.playItem(song("cold-first"), null, "", "")
+        service.daemon.serviceActive = true
+        service.playItem(song("cold-second"), null, "", "")
+        expect(writes().length === 0, "Click used Connect before the receiver registered")
+        expect(service.pendingPlaybackBody
+          && service.pendingPlaybackBody.uris[0] === "spotify:track:cold-second",
+          "The newest click did not replace the pending song")
+        service.daemon.busy = false
+        service.daemon.started()
+        stage = 3
+        interval = 1000
+        restart()
+      } else {
+        var listed = live("/me/player/devices")
+        expect(writes().length === 0 && listed.length === 1,
+          "Started receiver was not looked up before playback")
+        complete(listed[0], 200, { devices: [{ id: "local", name: service.deviceName,
+          type: "Computer", is_active: false, is_restricted: false }] })
+        expect(writes().length === 1 && writes()[0].url.indexOf("device_id=local") >= 0
+          && JSON.parse(writes()[0].body).uris[0] === "spotify:track:cold-second",
+          "The newest song did not play once the receiver registered")
+        service.daemon.serviceActive = false
         console.log("PLAYBACK_DISPATCH_PASS")
         Qt.quit()
       }

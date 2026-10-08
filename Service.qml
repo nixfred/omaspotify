@@ -224,6 +224,8 @@ Item {
   readonly property bool hasLocalPlayer: activePlayer !== null
   property var remotePlayback: null
   property bool remotePlaybackLoading: false
+  property bool remotePlaybackInteractive: false
+  property var remotePlaybackRequest: null
   property var remotePlaybackWaiters: []
   property var rememberedRemoteVolumeDevice: null
   property real rememberedRemoteVolumePercent: -1
@@ -1352,11 +1354,11 @@ Item {
     else playbackPositionTick++
   }
 
-  function finishRemotePlaybackWaiters(ok) {
+  function finishRemotePlaybackWaiters(ok, error) {
     var pending = remotePlaybackWaiters.slice()
     remotePlaybackWaiters = []
     for (var i = 0; i < pending.length; i++) {
-      try { pending[i](ok === true) }
+      try { pending[i](ok === true, String(error || "")) }
       catch (e) { /* callers own callback errors */ }
     }
   }
@@ -1585,17 +1587,23 @@ Item {
   }
 
   function loadPlaybackState(callback, reportError) {
-    if (typeof callback === "function") {
+    var waiting = typeof callback === "function"
+    if (waiting) {
       var waiters = remotePlaybackWaiters.slice()
       waiters.push(callback)
       remotePlaybackWaiters = waiters
     }
-    if (remotePlaybackLoading) return
+    if (remotePlaybackLoading && (remotePlaybackInteractive || !waiting)) return
+    // A caller waiting on the result replaces a status poll, which a
+    // background rate-limit pause can hold in the queue past its deadline.
+    if (remotePlaybackLoading) spotifyApi.abortRequest(remotePlaybackRequest)
     var expected = dataSerial
     remotePlaybackLoading = true
+    remotePlaybackInteractive = waiting
     // This is also the first-click device probe. A status poll must not hold
     // playback behind the normal fifteen-second deadline or quota retries.
-    spotifyApi.request("GET", "/me/player", { additional_types: "episode" }, null,
+    remotePlaybackRequest = spotifyApi.request("GET", "/me/player",
+      { additional_types: "episode" }, null,
       function(status, payload, error) {
         root.remotePlaybackLoading = false
         if (expected !== root.dataSerial) {
@@ -1605,8 +1613,8 @@ Item {
         if (!error) root.applyPlaybackState(payload)
         else if (reportError === true) root.fail(error)
         if (!error && !root.hasMedia) root.loadResumeCandidate()
-        root.finishRemotePlaybackWaiters(!error)
-      }, { priority: typeof callback === "function" ? "interactive" : "",
+        root.finishRemotePlaybackWaiters(!error, error)
+      }, { priority: waiting ? "interactive" : "",
         retryRateLimit: false, timeoutMs: 2000 })
   }
 
@@ -3990,7 +3998,11 @@ Item {
       waitForLocalSocketThenPlay(playbackSerial)
       return
     }
-    if (target && target.local && daemonManager.running) {
+    // Connect needs this receiver registered by the current start; a click
+    // during a start or socket wait stays on that path as the newest song.
+    if (target && target.local && target.id && String(target.id) === localDeviceId
+        && daemonManager.running && !daemonManager.busy
+        && !localSocketWaitTimer.running) {
       localActivationRequested = false
       sendPendingPlayback(Api.playbackTargetDeviceId(target, selectedDeviceExplicit))
       return
@@ -4076,8 +4088,16 @@ Item {
     var current = chooseDevice()
     if (!selectedDeviceExplicit && remotePlaybackLoading
         && !(current && current.active)) {
-      loadPlaybackState(function() {
-        root.dispatchPendingPlayback(playbackSerial)
+      loadPlaybackState(function(ok, error) {
+        if (ok) {
+          root.dispatchPendingPlayback(playbackSerial)
+          return
+        }
+        // An unconfirmed receiver must not hand playback to this computer.
+        if (playbackSerial !== root.pendingPlaybackSerial
+            || !root.pendingPlaybackBody) return
+        root.fail(error)
+        root.clearPendingPlayback()
       })
       return
     }
