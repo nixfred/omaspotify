@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Starting a song on the displayed active receiver no longer waits for an
+  unrelated playback-status refresh. Initial device discovery still waits for
+  a short refresh, bounded to two seconds without rate-limit retries. A
+  running local receiver also uses Connect immediately if its socket is not
+  ready, rather than waiting a fixed five seconds first.
+
 - Optional idle playlist caching fills first pages across the library before
   paging deeper, persists progress, and checks Spotify versions to skip unchanged
   song lists. A separate bounded cache keeps these rows ready for playlist and

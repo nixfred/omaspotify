@@ -1593,6 +1593,8 @@ Item {
     if (remotePlaybackLoading) return
     var expected = dataSerial
     remotePlaybackLoading = true
+    // This is also the first-click device probe. A status poll must not hold
+    // playback behind the normal fifteen-second deadline or quota retries.
     spotifyApi.request("GET", "/me/player", { additional_types: "episode" }, null,
       function(status, payload, error) {
         root.remotePlaybackLoading = false
@@ -1604,7 +1606,8 @@ Item {
         else if (reportError === true) root.fail(error)
         if (!error && !root.hasMedia) root.loadResumeCandidate()
         root.finishRemotePlaybackWaiters(!error)
-      })
+      }, { priority: typeof callback === "function" ? "interactive" : "",
+        retryRateLimit: false, timeoutMs: 2000 })
   }
 
   function apiAction(method, path, query, body, successText, callback) {
@@ -3983,13 +3986,17 @@ Item {
       clearPendingPlayback()
       return
     }
-    if (backendClient.ready || daemonManager.playbackReady) {
+    if (backendClient.ready) {
       waitForLocalSocketThenPlay(playbackSerial)
       return
     }
     if (target && target.local && daemonManager.running) {
       localActivationRequested = false
       sendPendingPlayback(Api.playbackTargetDeviceId(target, selectedDeviceExplicit))
+      return
+    }
+    if (daemonManager.playbackReady) {
+      waitForLocalSocketThenPlay(playbackSerial)
       return
     }
     if (!daemonManager.binaryAvailable || !daemonManager.unitAvailable) {
@@ -4062,10 +4069,13 @@ Item {
     deviceProbeAttempts = 0
     noteActivity()
 
-    // Opening the panel refreshes current playback asynchronously. Wait for
-    // that in-flight result before choosing the local fallback, otherwise a
-    // fast click can race the refresh and move playback off the active device.
-    if (!selectedDeviceExplicit && remotePlaybackLoading) {
+    // A known active receiver already represents the device shown to the
+    // user. Do not put the click behind an unrelated status poll. Only wait
+    // for the initial short refresh when the local fallback would otherwise
+    // race discovery and move playback off an unknown active receiver.
+    var current = chooseDevice()
+    if (!selectedDeviceExplicit && remotePlaybackLoading
+        && !(current && current.active)) {
       loadPlaybackState(function() {
         root.dispatchPendingPlayback(playbackSerial)
       })

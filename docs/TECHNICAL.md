@@ -221,6 +221,14 @@ usable after the account connects, even while that second step is unfinished.
 
 ## Local Spotify Connect
 
+An active receiver already shown in the UI can accept a song click while an
+unrelated playback-status refresh is still running. Only the initial refresh,
+when no active receiver is known and local fallback could steal playback,
+holds the click. Status reads have a two-second total deadline without
+rate-limit retries. A ready local socket remains preferred; a known running
+local receiver can use the Web API immediately when that socket is not ready,
+instead of first waiting five seconds for it.
+
 New playback keeps Spotify's currently active device. An explicit
 choice in the Devices view takes priority, and the app's local device is used
 only when no active target is available. Restricted active devices are kept as
