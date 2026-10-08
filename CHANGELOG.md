@@ -13,7 +13,9 @@
   routing when the player is off or refuses a list. This reaches the
   playlists a personal Web API app is answered 403 for and spends no developer
   quota. A receiver set never to sleep is started when the panel opens and
-  when idle warming can run, so the whole library caches locally.
+  when idle warming can run, so the whole library caches locally; while it
+  runs, idle warming sets aside the week-long refusals and quota pauses it
+  remembered from the Web API, since those are the lists it now reads.
 
 - Idle warming spends far less of a personal app's daily quota. A held list
   is compared with Spotify once a day instead of once an hour (the library

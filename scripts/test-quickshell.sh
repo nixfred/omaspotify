@@ -3,6 +3,11 @@ set -euo pipefail
 source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 test_root=$(mktemp -d)
 trap 'rm -rf -- "$test_root"' EXIT
+# Every stage gets a runtime dir of its own. With the host's, a Service under
+# test finds the developer's live backend socket and reads playlists through
+# it, and then the Web API queue the checks inspect is empty.
+mkdir -p "$test_root/runtime"
+export XDG_RUNTIME_DIR="$test_root/runtime"
 cp "$source_root/"{AuthManager.qml,Api.js,OAuth.js} "$test_root/"
 sed 's|import "../.." as Plugin|import "." as Plugin|' \
   "$source_root/tests/integration/AuthIdentity.qml" > "$test_root/shell.qml"

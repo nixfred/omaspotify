@@ -5081,6 +5081,7 @@ Item {
     idle: !root.uiVisible && !root.playlistActionBusy && !root.playlistsLoading
       && !root.searchLoading
     playlists: root.playlists
+    localReads: backendClient.ready
     request: function(path, query, callback) {
       return root.playlistSourceRequest("GET", path, query, callback,
         { priority: "background", retryRateLimit: false, allowFallback: false,

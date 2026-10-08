@@ -275,6 +275,22 @@ TestCase {
     var later = cache([playlist("a")]); later.checksRaw = checks; later.diskRaw = raw; later.restore()
     compare(step(later).path, "/playlists/a", "an expired wait is not restored")
   }
+  // A refusal and a quota pause are the Web API's; the local player reads
+  // those lists and spends nothing, so it is asked regardless.
+  function test_localReadsIgnoreWebApiRefusalsAndPauses() {
+    var c = cache([playlist("a"), playlist("b")]); c.tick(); answer(null, 403, "forbidden")
+    c.suspendedUntil = clock + c.quotaPauseMs
+    var count = requests.length; step(c); compare(requests.length, count, "the Web API stays paused")
+    c.localReads = true
+    compare(step(c).path, "/playlists/b", "the pause does not hold the player back")
+    answer({ snapshot_id: "v1" })
+    compare(step(c).path, "/playlists/b/items")
+    answer({ items: [{ track: track("one") }], next: null })
+    compare(step(c).path, "/playlists/b", "the final page is verified")
+    answer({ snapshot_id: "v1" })
+    compare(step(c).path, "/playlists/a", "the refused list is asked again through the player")
+  }
+
   function test_hiddenSongsWaitAWeekAndAreRemembered() {
     var c = cache(); recheckedSpy.target = c; recheckedSpy.clear()
     start(c); answer({ items: [], next: null })

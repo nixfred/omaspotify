@@ -15,6 +15,10 @@ Item {
   property bool warmingEnabled: false
   property bool signedIn: false
   property bool idle: false
+  // Reads go to the local player, which lists what the Web API refuses this
+  // app and spends no quota, so neither a remembered refusal nor a quota
+  // pause holds a list back while it is true.
+  property bool localReads: false
   property bool diskReady: false
   property string diskRaw: ""
   property string checksRaw: ""
@@ -352,7 +356,8 @@ Item {
       for (var j = 0; j < list.length; j++) {
         var index = (cursor + j) % list.length
         var item = list[index]
-        if (!item || !item.id || (retryAt[item.id] || 0) > now()) continue
+        if (!item || !item.id) continue
+        if (!localReads && (retryAt[item.id] || 0) > now()) continue
         var kept = read(item.id)
         if (!kept && budgetFull) continue
         if (phase === 0 && kept) continue
@@ -397,7 +402,7 @@ Item {
   }
 
   function tick() {
-    if (!canRun || handle || now() < nextAt || now() < suspendedUntil
+    if (!canRun || handle || now() < nextAt || (!localReads && now() < suspendedUntil)
         || typeof request !== "function") return
     if (!work) {
       prune()
