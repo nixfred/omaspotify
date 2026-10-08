@@ -2549,7 +2549,9 @@ Item {
       else playlistRestoreTargetCount = 0
       return
     }
-    if (kept && storedVersion && !knownChange) checkPlaylistVersion(kept, !!onScreen)
+    // The library is saved apart from the songs and can name an older version
+    // than the rows kept, so a difference is settled by asking Spotify.
+    if (kept && storedVersion) checkPlaylistVersion(kept, !!onScreen)
     else loadPlaylistItems(false, false, kept ? knownVersion : undefined)
   }
 
@@ -2572,6 +2574,9 @@ Item {
         }
         var version = String(payload && payload.snapshot_id || "")
         if (version && version === String(kept.item.snapshotId || "")) {
+          var listed = root.playlistById(playlistId)
+          if (listed && String(listed.snapshotId || "") !== version)
+            root.publishPlaylistVersion(playlistId, version)
           if (!onScreen) pageCache.write(cacheKey, kept)
           if (!onScreen) playlistLibraryCache.keep(playlistLibraryCache.withHeldCover(kept))
           if (Api.playlistRestoreShouldContinue(root.playlistItems.length,

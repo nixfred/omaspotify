@@ -147,7 +147,8 @@ ShellRoot {
       expect(requests.length === 3, "Reopening from the sidebar downloaded tracks again")
       expect(service.playlistItems[0].id === "new-changed", "Reopening lost the new rows")
 
-      // A known newer library version bypasses even a fresh cache.
+      // A different library version is checked even against a fresh cache:
+      // the library may be the older of the two.
       service.playlists = service.playlists.map(function(item) {
         if (item.id !== "unchanged") return item
         var copy = Object.assign({}, item)
@@ -156,10 +157,16 @@ ShellRoot {
       })
       service.openPlaylist(library("unchanged"))
       pump()
-      expect(requests.length === 4 && last().url.indexOf("/items") >= 0,
+      expect(requests.length === 4 && last().url.indexOf("fields=snapshot_id") >= 0,
         "A known changed version was treated as fresh")
       expect(service.selectedPlaylist.snapshotId === "v1",
         "Cached rows were labelled with a version they do not show")
+      complete(last(), 200, { snapshot_id: "v3" })
+      pump()
+      expect(requests.length === 5 && last().url.indexOf("/items") >= 0,
+        "A confirmed newer version kept the old rows")
+      expect(service.selectedPlaylist.snapshotId === "v1",
+        "The new version was published before its rows arrived")
       complete(last(), 200, rows("new-unchanged"))
       expect(service.selectedPlaylist.snapshotId === "v3", "Fetched rows kept the old label")
 
@@ -168,7 +175,7 @@ ShellRoot {
       pump()
       complete(last(), 200, {})
       pump()
-      expect(requests.length === 6 && last().url.indexOf("/items") >= 0,
+      expect(requests.length === 7 && last().url.indexOf("/items") >= 0,
         "An unknown version was trusted")
       expect(service.selectedPlaylist.snapshotId === "v1", "Kept rows lost their version early")
       complete(last(), 200, rows("new-unknown"))
@@ -181,12 +188,12 @@ ShellRoot {
       pump()
       complete(last(), 500, { error: { status: 500, message: "Server error" } })
       pump()
-      expect(requests.length === 7, "A failed check downloaded tracks")
+      expect(requests.length === 8, "A failed check downloaded tracks")
       expect(service.playlistItems[0].id === "old-failed", "A failed check dropped cached rows")
       expect(!service.playlistItemsLoading, "A failed check left Loading on")
       service.openPlaylist(library("failed"))
       pump()
-      expect(requests.length === 8 && last().url.indexOf("fields=snapshot_id") >= 0,
+      expect(requests.length === 9 && last().url.indexOf("fields=snapshot_id") >= 0,
         "A failed check was treated as fresh")
 
       // Changed while the panel restores a deeper position: the new version

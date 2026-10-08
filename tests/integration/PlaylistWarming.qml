@@ -143,6 +143,8 @@ ShellRoot {
         return service.playlistWithVersion(row, "warm", "v2")
       })
       service.openPlaylist(service.playlists[0]); step()
+      expect(lastFor("warm").url.indexOf("fields=snapshot_id") >= 0, "the new version was not checked")
+      complete(200, { snapshot_id: "v2" }, lastFor("warm")); step()
       expect(lastFor("warm").url.indexOf("/playlists/warm/items") >= 0, "the new version was not read")
       complete(200, { items: rows, offset: 0, next: null }, lastFor("warm"))
       service.keepPlaylistPage()
@@ -152,6 +154,23 @@ ShellRoot {
       expect(service.detailItem.imageUrl === "https://i.scdn.co/image/new-cover-300"
         && service.detailItems.length === 50 && playlistRequests().length === asked,
         "a version saved from the Playlists page drew a list-size cover: " + service.detailItem.imageUrl)
+      // A library file saved before the songs were, as after a restart, names an
+      // older version. Spotify decides which is current: the songs stay.
+      service.playlists = service.playlists.map(function(row) {
+        return service.playlistWithVersion(row, "warm", "v1")
+      })
+      asked = playlistRequests().length
+      service.openPlaylist(service.playlists[0]); step()
+      expect(service.playlistItems.length === 50, "the saved songs were not drawn")
+      expect(playlistRequests().length === asked + 1
+        && lastFor("warm").url.indexOf("fields=snapshot_id") >= 0,
+        "an older library version was trusted over the saved songs: " + lastFor("warm").url)
+      complete(200, { snapshot_id: "v2" }, lastFor("warm")); step()
+      expect(playlistRequests().length === asked + 1, "unchanged saved songs were downloaded again")
+      expect(service.playlistItems.length === 50 && service.selectedPlaylist.snapshotId === "v2"
+        && service.playlistCache.read("warm").item.snapshotId === "v2",
+        "the saved songs lost the version Spotify confirmed")
+      expect(service.playlistById("warm").snapshotId === "v2", "the library kept the older version")
       // A list first saved from the Playlists page uses the cover its listing gave.
       var listed = service.libraryMapper("playlist")({ id: "listed", type: "playlist", name: "Listed",
         uri: "spotify:playlist:listed", snapshot_id: "l1", owner: { id: "warming-account" },
