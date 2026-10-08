@@ -182,12 +182,12 @@ the locked Rust source locally instead of executing an unverified download.
 ## Seeing "Spotify is busy." or slow searches?
 
 The plugin's Spotify Web API client ID is shared by every install worldwide,
-and Spotify rate-limits requests **per app**, not per user. When that shared
-quota runs out you see `Spotify is busy. Try again in N seconds.` and searches
-that stall even though nothing is wrong on your side.
+and Spotify rate-limits requests **per app**, not per user. When the shared
+app is rate-limited you see `Spotify is busy. Try again in N seconds.` and
+searches that stall even though nothing is wrong on your side.
 
 You can use a personal [Spotify Developer app](https://developer.spotify.com/dashboard),
-which has a quota of its own that nobody else is spending.
+which has a rate limit of its own that nobody else is spending.
 
 1. Create the app, and tick **Web API** under "Which API/SDKs are you planning to
    use?". Nothing else is needed.
@@ -203,12 +203,24 @@ which has a quota of its own that nobody else is spending.
 **Keep the shipped app authorized as well.** Spotify
 [closed several endpoints to apps registered after November 2024](https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api),
 and a personal app cannot reach an artist's albums, an artist's top songs,
-related artists, new releases, or several tracks at once. Spotify also leaves
-its own playlists, like On Repeat and Your Top Songs, out of your playlist list.
-The shipped app predates that change, so OmaSpotify sends everything through
-your app and quietly asks the shipped one for just those. If you have never
-signed in with the shipped app, those parts of the artist page and the Home
-tab stay empty, and Spotify's playlists are missing from your library.
+related artists, new releases, or several tracks at once, and it cannot read
+playlists that belong to other people. Spotify also leaves its own playlists,
+like On Repeat and Your Top Songs, out of your playlist list. The shipped app
+predates that change, so the work is split between the two apps:
+
+- **Your app** handles your account and library, playlists you own or
+  collaborate on, every change you make, and idle caching.
+- **The shipped app** is asked for a closed endpoint after your app is refused
+  it, and for Spotify's own playlists. It also reads other people's playlists
+  directly, without trying your app first: opening one, loading its further
+  pages and checking its version, the candidate playlists track radio looks
+  at, and the songs read when you make a followed playlist your own. Your app
+  still writes the copy. These reads count against the shipped app's shared
+  rate limit.
+
+If you have never signed in with the shipped app, those parts of the artist page
+and the Home tab stay empty, Spotify's playlists are missing from your library,
+and other people's playlists are read through your app, which Spotify refuses.
 
 This is a power-user option, not a recommendation for everyone. A
 development-mode app allows [five authorized users](https://developer.spotify.com/documentation/web-api/concepts/quota-modes),
@@ -218,6 +230,15 @@ a Premium account. Since
 a developer account may hold up to 25 client IDs, but the quota is counted per
 developer account rather than per ID, so making more of them does not buy more
 requests.
+
+Spotify refuses requests in two different ways. A rate limit is a short pause
+for one app; you see `Spotify is busy. Try again in N seconds.` A development
+quota refusal applies to every app on that developer account and can last for
+hours. OmaSpotify shows it as a developer quota message rather than advice to
+try again soon. Neither refusal is worked around: OmaSpotify chooses which app
+to use from the request itself, never retries a rate-limited or quota-refused
+request on the other app, and never switches client IDs for you.
+
 The local Connect authorization remains separate. The personal and shipped apps
 have separate request queues, cooldowns, and concurrency limits: a refusal from
 the shipped app cannot stall requests through your personal app.
@@ -239,8 +260,10 @@ panel to let it work: it fills first pages before deeper pages, one request at a
 time, with at least three seconds between requests. It caches song lists and
 the address of each list's cover, not audio or artwork; accessible lists resume
 after restart. Spotify version checks skip unchanged lists; changed lists need a
-new download because Spotify has no incremental song-diff endpoint. Rate limits
-pause warming; personal apps do not fall back to the shared app during warming.
+new download because Spotify has no incremental song-diff endpoint. A rate
+limit or quota refusal pauses warming for at least five minutes, or for as long
+as Spotify's `Retry-After` asks when that is longer; personal apps do not fall
+back to the shared app during warming.
 After a restart it looks up your account by itself, without the panel being
 opened.
 

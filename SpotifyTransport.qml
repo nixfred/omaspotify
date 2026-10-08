@@ -282,7 +282,7 @@ Item {
 
   function requestError(status, payload, xhr, fallback) {
     if (status === 429 && quotaExceeded(payload))
-      return "This Spotify app has exhausted its developer quota. Check the app configuration or use another authorized client."
+      return "Spotify refused this request because the developer quota for this app is used up. It stays refused until Spotify resets that quota."
     if (status === 429)
       return Api.rateLimitMessage(Api.responseRetryAfter(xhr))
     return Api.responseError(status, payload, fallback)

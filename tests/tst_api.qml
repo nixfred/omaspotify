@@ -1446,7 +1446,7 @@ TestCase {
   }
 
   function test_playlistFailure_exposesQuotaReasonWithoutSecrets() {
-    var quota = "This Spotify app has exhausted its developer quota. Check the app configuration or use another authorized client."
+    var quota = "Spotify refused this request because the developer quota for this app is used up. It stays refused until Spotify resets that quota."
     compare(Api.playlistItemsEmptyMessage({ ownerId: "me" }, 0, quota, 429, "me"), quota)
     compare(Api.playlistItemsEmptyMessage({ ownerId: "other" }, 0, quota, 429, "me"), quota)
     compare(Api.playlistItemsEmptyMessage({ ownerId: "me" }, 0, "access_token=secret", 500, "me"), "access_token=<redacted>")
