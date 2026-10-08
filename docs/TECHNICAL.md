@@ -138,7 +138,10 @@ stale cache stay, and the next visit checks again. A playlist cut to the 200-row
 cache cap keeps a cursor just after the last kept Spotify position, so Load
 More and deeper restores still reach the rest, in the opened playlist and in a
 playlist detail page alike; pages without known positions lose their cursor.
-Known mismatches bypass the fresh-cache shortcut, and unknown versions fetch
+A library version that differs from the cached rows bypasses the fresh-cache
+shortcut but is settled by the same `snapshot_id` check, because `library.json`
+is saved apart from the songs and can name the older version; a confirmed match
+keeps the rows and corrects the library entry. Unknown versions fetch
 content. Metadata
 failures leave the visible rows and stale timestamp intact. Switching pages or
 explicitly loading more cancels an outstanding version check.
