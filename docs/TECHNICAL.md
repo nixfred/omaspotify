@@ -134,6 +134,28 @@ cannot fit inside its remaining deadline reports the rate limit at once instead
 of waiting to time out. Expired requests are removed before freed slots can send
 queued commands, so an old Play action cannot execute after timing out.
 
+While the local player is up, every playlist read (`GET /playlists/{id}` and
+`GET /playlists/{id}/items`, from an opened page, a version check, Load More,
+a continuation cursor or the idle warmer) goes to its socket first as a
+`playlist_items` command, and the Web API only when it is down or refuses the
+read. The player's Connect session lists every playlist the account can see,
+including the ones a personal Web API app is answered 403 for, and spends no
+developer quota. `Service.playlistSourceRequest` translates the answer into
+the Web API's own shapes (`Api.backendPlaylistPayload`): a version check gets
+`snapshot_id` (the Web API spelling of the same revision) and `images`; a
+rows page gets `items`, `offset`, `total` and a `next` that is the Web API
+path for the following rows, so a cursor kept in the cache still works if the
+player has gone away by the time it is followed. A page read this way also
+names its version, which is published to the open list and its library entry
+at once. Backend handles abort and chain like transport handles; a refusal
+chains a Web API request with the caller's original options, catalog routing
+included. A receiver set never to sleep (`idleShutdownMinutes` 0) is started
+when the panel opens and when idle warming becomes able to run, so the rows
+come from it rather than the Web API; a receiver that sleeps is not started
+for reading alone, since it would flap on and off every sleep period.
+`PlaylistBackendRows.qml` opens lists against a stand-in socket and checks the
+rows, the cursor, the version and the fall-through.
+
 Cached playlist pages retain their `snapshotId`. A stale page first requests
 `GET /playlists/{id}?fields=snapshot_id` with revalidation priority. Matching
 versions refresh the cache timestamp without fetching tracks. The open playlist

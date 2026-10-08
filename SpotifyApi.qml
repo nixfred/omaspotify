@@ -5,6 +5,8 @@ import QtQuick
 SpotifyTransport {
   id: root
   fallbackTransport: sharedTransport.item
+  // Without a personal Client ID the primary queue is the shipped app itself.
+  appLabel: fallbackAuth !== null ? "personal" : "shared"
   onFallbackAuthChanged: cancelForwardedRequests()
 
   Loader {

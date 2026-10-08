@@ -1785,6 +1785,7 @@ name = "omaspotify-backend"
 version = "2.0.1"
 dependencies = [
  "anyhow",
+ "base64",
  "clap",
  "env_logger",
  "hex",
@@ -1793,8 +1794,10 @@ dependencies = [
  "librespot-metadata",
  "librespot-oauth",
  "librespot-playback",
+ "librespot-protocol",
  "log",
  "mpris-server",
+ "protobuf",
  "serde",
  "serde_json",
  "sha1",

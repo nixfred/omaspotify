@@ -52,6 +52,15 @@ pub enum Command {
     AddToQueue {
         uri: String,
     },
+    /// One page of a playlist's rows, read through the Connect session
+    /// instead of the Web API. A limit of 0 returns the version and length.
+    PlaylistItems {
+        uri: String,
+        #[serde(default)]
+        offset: u32,
+        #[serde(default)]
+        limit: Option<u32>,
+    },
 }
 
 const fn default_true() -> bool {

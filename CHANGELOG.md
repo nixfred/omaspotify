@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Playlists are read through the local player while it runs. The backend
+  gained a `playlist_items` command that lists a playlist through its Connect
+  session and describes the songs with one batched metadata request per
+  hundred rows, answered off the connection's command path so pause and play
+  are never held behind it. The result uses the Web API's own row shape and
+  the Web API spelling of the playlist version, so opened pages, version
+  checks, Load More, cached cursors and idle warming all take it without a
+  second codec, and fall back to the Web API with the caller's original
+  routing when the player is off or refuses a list. This reaches the
+  playlists a personal Web API app is answered 403 for and spends no developer
+  quota. A receiver set never to sleep is started when the panel opens and
+  when idle warming can run, so the whole library caches locally.
+
 - Idle warming spends far less of a personal app's daily quota. A held list
   is compared with Spotify once a day instead of once an hour (the library
   listing still triggers a check as soon as it names a different version, and

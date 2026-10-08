@@ -477,6 +477,78 @@ function playlistReadId(method, path) {
   try { return decodeURIComponent(match[1]) } catch (e) { return "" }
 }
 
+// A playlist read the local player can answer from its Connect session:
+// GET /playlists/{id} (its version and cover) or GET /playlists/{id}/items,
+// with the page named in the query or in a continuation cursor. Null for
+// anything else, which keeps its Web API route.
+function backendPlaylistRead(method, path, query) {
+  var id = playlistReadId(method, path)
+  if (!id) return null
+  var clean = apiRequestPath(path)
+  var items = /\/items$/.test(clean.split("?")[0])
+  var params = parseQueryString(clean.split("?")[1] || "")
+  var settings = query || ({})
+  var limit = Number(settings.limit !== undefined ? settings.limit : params.limit)
+  var offset = Number(settings.offset !== undefined ? settings.offset : params.offset)
+  return {
+    id: id,
+    uri: "spotify:playlist:" + id,
+    items: items,
+    offset: items && isFinite(offset) && offset > 0 ? Math.floor(offset) : 0,
+    limit: !items ? 0 : (isFinite(limit) && limit > 0 ? Math.floor(limit) : 100)
+  }
+}
+
+function parseQueryString(text) {
+  var values = ({})
+  var parts = String(text || "").split("&")
+  for (var i = 0; i < parts.length; i++) {
+    if (!parts[i]) continue
+    var pair = parts[i].split("=")
+    try { values[decodeURIComponent(pair[0])] = decodeURIComponent(pair.slice(1).join("=")) }
+    catch (error) { values[pair[0]] = pair.slice(1).join("=") }
+  }
+  return values
+}
+
+// The continuation of a backend page, spelled as the Web API path for the
+// same rows, so a cursor kept in the cache still works if the local player
+// is gone by the time it is followed.
+function backendPlaylistItemsPath(id, offset, limit) {
+  return "/playlists/" + encodeURIComponent(String(id)) + "/items?offset="
+    + Math.max(0, Math.floor(Number(offset) || 0)) + "&limit="
+    + Math.max(1, Math.floor(Number(limit) || 100))
+}
+
+// The backend's answer in the shape the Web API would have given for the
+// same read, so pages and the cache see no difference.
+function backendPlaylistPayload(read, result) {
+  var source = result || ({})
+  if (!read.items) {
+    return {
+      type: "playlist",
+      id: read.id,
+      uri: read.uri,
+      name: String(source.name || ""),
+      snapshot_id: String(source.snapshot_id || ""),
+      images: Array.isArray(source.images) ? source.images : [],
+      items: { total: Number(source.total) || 0 }
+    }
+  }
+  var next = source.next
+  return {
+    items: Array.isArray(source.items) ? source.items : [],
+    // The Web API never says which version a page of rows belongs to; the
+    // player does, so the open list can be labelled with it at once.
+    snapshot_id: String(source.snapshot_id || ""),
+    offset: Number(source.offset) || 0,
+    limit: Number(source.limit) || 0,
+    total: Number(source.total) || 0,
+    next: next === null || next === undefined || next === ""
+      ? null : backendPlaylistItemsPath(read.id, next, read.limit)
+  }
+}
+
 function playlistNeedsCatalogRead(playlist, userId) {
   return !!playlist && !!String(playlist.ownerId || "") && !!String(userId || "")
     && playlist.collaborative !== true && !playlistOwnedByUser(playlist, userId)

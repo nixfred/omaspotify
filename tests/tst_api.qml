@@ -666,6 +666,40 @@ TestCase {
     verify(!Api.quotaExceededPayload("QUOTA_EXCEEDED"))
   }
 
+  // The local player answers playlist reads; everything else keeps its route.
+  function test_backendPlaylistRead_namesThePageTheLocalPlayerShouldAnswer() {
+    var version = Api.backendPlaylistRead("GET", "/playlists/abc", { fields: "snapshot_id,images" })
+    compare(version.uri, "spotify:playlist:abc")
+    compare(version.items, false)
+    compare(version.limit, 0, "a version check asks for no rows")
+    var first = Api.backendPlaylistRead("GET", "/playlists/abc/items", { limit: 50 })
+    compare(first.items, true); compare(first.offset, 0); compare(first.limit, 50)
+    var cursor = Api.backendPlaylistRead("GET",
+      "https://api.spotify.com/v1/playlists/abc/items?offset=100&limit=100", null)
+    compare(cursor.id, "abc"); compare(cursor.offset, 100); compare(cursor.limit, 100)
+    var relative = Api.backendPlaylistRead("GET", "/playlists/abc/items?offset=250&limit=50", null)
+    compare(relative.offset, 250); compare(relative.limit, 50)
+    compare(Api.backendPlaylistRead("GET", "/me/playlists", null), null)
+    compare(Api.backendPlaylistRead("POST", "/playlists/abc/items", null), null)
+    compare(Api.backendPlaylistRead("GET", "/playlists/abc/followers", null), null)
+  }
+
+  function test_backendPlaylistPayload_looksLikeTheWebApiAnswer() {
+    var read = Api.backendPlaylistRead("GET", "/playlists/abc/items", { limit: 100 })
+    var page = Api.backendPlaylistPayload(read, { snapshot_id: "v9", total: 250, offset: 0,
+      limit: 100, items: [{ added_at: "", item: null }], next: 100 })
+    compare(page.items.length, 1); compare(page.total, 250)
+    compare(page.next, "/playlists/abc/items?offset=100&limit=100",
+      "the cursor is the Web API path for the same rows, so it survives the player going away")
+    var last = Api.backendPlaylistPayload(read, { items: [], total: 250, offset: 200, limit: 50, next: null })
+    compare(last.next, null)
+    var version = Api.backendPlaylistPayload(Api.backendPlaylistRead("GET", "/playlists/abc", null),
+      { snapshot_id: "v9", name: "Focus", total: 250, images: [{ url: "u", width: 640, height: 640 }] })
+    compare(version.snapshot_id, "v9"); compare(version.type, "playlist"); compare(version.id, "abc")
+    compare(Api.imageFor(version.images, 256), "u")
+    compare(version.items.total, 250)
+  }
+
   function test_resumeCandidateFreshness_isMinutesNotSeconds() {
     verify(Api.RESUME_CANDIDATE_FRESH_MS >= 600000,
       "an idle panel polling every fifteen seconds must not refetch the last play each time")

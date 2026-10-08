@@ -1658,10 +1658,43 @@ Item {
   }
 
   function pageRequest(method, path, query, callback, revalidating) {
-    return spotifyApi.request(method, path, query, null, callback,
+    return playlistSourceRequest(method, path, query, callback,
       { priority: revalidating === true ? "revalidate" : "interactive",
         timeoutMs: Api.API_FOREGROUND_TIMEOUT_MS,
         shared: playlistReadUsesCatalog(method, path) })
+  }
+
+  // A playlist read goes to the local player first while it is up: its
+  // Connect session reads every list the account can see, including the ones
+  // a personal Web API app is refused, and spends no developer quota. Anything
+  // else, or a read the player refuses, takes the Web API with the caller's
+  // own options. The handle aborts and chains like a transport handle.
+  function playlistSourceRequest(method, path, query, callback, options) {
+    var read = backendClient.ready ? Api.backendPlaylistRead(method, path, query) : null
+    if (!read) return spotifyApi.request(method, path, query, null, callback, options)
+    var handle = { aborted: false, xhr: null, job: { local: true, path: path }, forwardedRequest: null }
+    var startedAt = Date.now()
+    backendClient.playlistItems(read.uri, read.offset, read.limit, function(ok, result, error) {
+      if (handle.aborted) return
+      handle.job = null
+      if (ok && result) {
+        callback(200, Api.backendPlaylistPayload(read, result), "", null)
+        return
+      }
+      console.warn("Local player could not read " + Api.redact(String(path || ""))
+        + " after " + (Date.now() - startedAt) + " ms; asking the Web API: " + Api.redact(error))
+      handle.forwardedRequest = spotifyApi.request(method, path, query, null, callback, options)
+    })
+    return handle
+  }
+
+  // A receiver set never to sleep is worth having up before the first play:
+  // playlists then read through it instead of the Web API.
+  function startResidentReceiver() {
+    if (idleShutdownMinutes !== 0 || !cachePlaylistsOnIdle && !uiVisible) return
+    if (!daemonManager.credentialsAvailable || !daemonManager.playbackReady) return
+    if (daemonManager.running || daemonManager.busy) return
+    daemonManager.start()
   }
 
   function openView(view, force) {
@@ -2192,6 +2225,7 @@ Item {
     activeView = normalizedView(view)
     authManager.withAccessToken(function(token, error) {
       if (token) {
+        root.startResidentReceiver()
         root.loadPlaybackState()
         root.loadProfile()
         root.refreshPlayHistory(false)
@@ -2689,8 +2723,13 @@ Item {
             root.playlistRestoreTargetCount, root.playlistItemsNext))
           root.loadPlaylistItems(true)
         else root.playlistRestoreTargetCount = 0
-        if (!append && checkedVersion !== undefined)
-          root.publishPlaylistVersion(playlistId, checkedVersion)
+        // A page read through the local player names its own version. A
+        // checked version is published even when empty: that is what clears
+        // the label of rows whose version Spotify would not say.
+        var pageVersion = checkedVersion !== undefined ? checkedVersion
+          : String(payload && payload.snapshot_id || "")
+        if (!append && (checkedVersion !== undefined || pageVersion))
+          root.publishPlaylistVersion(playlistId, pageVersion)
       }, background)
     if (handle.job) playlistItemsRequest = handle
   }
@@ -5043,11 +5082,12 @@ Item {
       && !root.searchLoading
     playlists: root.playlists
     request: function(path, query, callback) {
-      return spotifyApi.request("GET", path, query, null, callback,
+      return root.playlistSourceRequest("GET", path, query, callback,
         { priority: "background", retryRateLimit: false, allowFallback: false,
           timeoutMs: Api.API_FOREGROUND_TIMEOUT_MS })
     }
     abort: function(handle) { spotifyApi.abortRequest(handle) }
+    onCanRunChanged: if (canRun) root.startResidentReceiver()
     onChanged: if (diskReady && !playlistSongsSaveTimer.running) playlistSongsSaveTimer.start()
     onRechecked: if (diskReady && !playlistChecksSaveTimer.running) playlistChecksSaveTimer.start()
     onVersionChecked: function(playlistId, snapshotId) {

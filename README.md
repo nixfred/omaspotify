@@ -266,6 +266,14 @@ rate limit pauses warming for at least five minutes, a spent daily quota for six
 hours, or for as long as Spotify's `Retry-After` asks when that is longer;
 personal apps do not fall back to the shared app during warming. A list Spotify
 will not show your app is left alone for a week, restarts included.
+
+While playback on this computer is running, playlists are read through it
+instead of the Web API: its Spotify session lists every playlist you can see,
+including the ones a personal app is refused, and nothing it reads counts
+against a developer quota. Set **Sleep empty local receiver** to 0 to keep it
+running; it is then started when you open the panel and whenever idle caching
+has work, so the whole library can be cached locally without touching the
+Web API. The Web API is used only while it is off or for a list it cannot read.
 After a restart it looks up your account by itself, without the panel being
 opened.
 
