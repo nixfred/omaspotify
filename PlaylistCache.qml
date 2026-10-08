@@ -158,45 +158,53 @@ Item {
     // Opening a warmed page must not truncate its full copy back to 50 rows.
     if (existing && existing.item.snapshotId && existing.item.snapshotId === capped.item.snapshotId
         && existing.items.length > capped.items.length) capped = existing
+    prune()
     var chunk = chunkFor(id, capped, prepared)
     var bytes = entryBytes(id, chunk)
     var totalBytes = 2 * frame("").length + bytes
     var totalRows = capped.items.length
-    var next = Api.shallowCopy(entries)
-    var expired = false
-    var keys = Object.keys(next)
-    for (var i = 0; i < keys.length; i++) {
-      if (keys[i] === id) continue
-      // Past its age an entry is never drawn again, so it gives its room back.
-      if (!Api.timestampIsFresh(next[keys[i]].updatedAt, now(), maxAgeMs)) {
-        delete next[keys[i]]
-        delete chunks[keys[i]]
-        delete sizes[keys[i]]
-        expired = true
-        continue
-      }
-      totalBytes += Number(sizes[keys[i]]) || 0
-      totalRows += next[keys[i]].data.items.length
+    for (var key in entries) {
+      if (key === id) continue
+      totalBytes += Number(sizes[key]) || 0
+      totalRows += entries[key].data.items.length
     }
-    if (expired) budgetFull = false
-    var fits = (next.hasOwnProperty(id) || Object.keys(next).length < maxEntries)
-      && totalBytes <= maxBytes && totalRows <= maxRows
-    var rewritten = expired || chunk !== chunks[id]
-    if (fits) {
-      // A changed list can give room back without being removed. Let missing
-      // lists try again; unchanged checks must not repeatedly reopen a full budget.
-      if (existing && (capped.items.length < existing.items.length || bytes < sizes[id]))
-        budgetFull = false
-      next[id] = { updatedAt: updatedAt, data: capped }
-      chunks[id] = chunk
-      sizes[id] = bytes
-    } else budgetFull = true
-    if (fits || expired) entries = next
-    if (!restoring && (expired || fits)) {
+    if (!(entries.hasOwnProperty(id) || Object.keys(entries).length < maxEntries)
+        || totalBytes > maxBytes || totalRows > maxRows) {
+      budgetFull = true
+      return false
+    }
+    // A changed list can give room back without being removed. Let missing
+    // lists try again; unchanged checks must not repeatedly reopen a full budget.
+    if (existing && (capped.items.length < existing.items.length || bytes < sizes[id]))
+      budgetFull = false
+    var rewritten = chunk !== chunks[id]
+    var next = Api.shallowCopy(entries)
+    next[id] = { updatedAt: updatedAt, data: capped }
+    chunks[id] = chunk
+    sizes[id] = bytes
+    entries = next
+    if (!restoring) {
       if (rewritten) changed()
       else rechecked()
     }
-    return fits
+    return true
+  }
+
+  // Past its age an entry is never drawn again, so it gives its room back.
+  function prune() {
+    var next = null
+    for (var id in entries) {
+      if (Api.timestampIsFresh(entries[id].updatedAt, now(), maxAgeMs)) continue
+      if (!next) next = Api.shallowCopy(entries)
+      delete next[id]
+      delete chunks[id]
+      delete sizes[id]
+    }
+    if (!next) return false
+    entries = next
+    budgetFull = false
+    if (!restoring) changed()
+    return true
   }
 
   function drop(id) {
@@ -335,6 +343,7 @@ Item {
     if (!canRun || handle || now() < nextAt || now() < suspendedUntil
         || typeof request !== "function") return
     if (!work) {
+      prune()
       var item = candidate()
       if (!item) return
       var kept = read(item.id)

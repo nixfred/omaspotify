@@ -252,6 +252,21 @@ TestCase {
     verify(c.keep(snapshot("b", 1)), "an entry too old to draw still held the only slot")
     compare(Object.keys(c.entries), ["b"])
   }
+  function test_expiryReopensAFullBudgetToIdleWork() {
+    var c = cache([playlist("a"), playlist("b"), playlist("c")]); c.maxEntries = 2
+    verify(c.keep(snapshot("a", 1)))
+    clock += c.maxAgeMs - 1000
+    verify(c.keep(snapshot("b", 1))); verify(!c.keep(snapshot("c", 1))); verify(c.budgetFull)
+    clock += 2000
+    changedSpy.target = c; changedSpy.clear()
+    var count = requests.length
+    c.tick()
+    compare(requests.length, count + 1, "rows too old to draw held the budget shut")
+    verify(!c.budgetFull)
+    compare(Object.keys(c.entries), ["b"], "only the expired entry gives its room back")
+    compare(c.read("b").items.length, 1)
+    compare(changedSpy.count, 1, "removing expired rows must be saved")
+  }
   function test_entryAndByteBudgets() {
     var c = cache(); c.maxEntries = 1; c.keep(snapshot("a", 1)); verify(!c.keep(snapshot("b", 1)))
     c.clear(); c.maxBytes = 10; verify(!c.keep(snapshot("a", 1)))

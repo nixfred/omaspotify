@@ -98,6 +98,21 @@ ShellRoot {
       expect(service.playlistItems.length === 50 && !service.playlistItemsLoading, "unchanged keeps songs")
       expect(songFileWrites === writes, "a confirmed version rewrote the whole song file")
       expect(service.playlistCache.freshness("warm") === "fresh", "a confirmed version stayed stale")
+      // An unchanged version keeps the warmed songs, but the header takes the
+      // playlist's own cover at the size the page draws it.
+      clock += 301000
+      service.openDetail(service.playlists[0]); step()
+      writes = songFileWrites
+      complete(200, { id: "warm", type: "playlist", name: "Fixture", snapshot_id: "v1",
+        owner: { id: "warming-account" }, tracks: { total: 50 },
+        images: [{ url: "https://i.scdn.co/image/cover-640", width: 640, height: 640 },
+          { url: "https://i.scdn.co/image/cover-300", width: 300, height: 300 },
+          { url: "https://i.scdn.co/image/cover-60", width: 60, height: 60 }] }, lastFor("warm"))
+      expect(service.detailItem.imageUrl === "https://i.scdn.co/image/cover-300",
+        "an unchanged warmed playlist kept a low-resolution cover: " + service.detailItem.imageUrl)
+      expect(service.detailItem.snapshotId === "v1" && service.detailItems.length === 50
+        && !service.detailLoading, "the confirmed detail page lost its warmed songs or version")
+      expect(songFileWrites === writes, "a confirmed detail page rewrote the whole song file")
       // Spotify hides the songs of a playlist you only follow: that is a message,
       // not an empty list to keep and show without it next time.
       var followed = { id: "followed", type: "playlist", kind: "context", name: "Followed",
@@ -134,6 +149,29 @@ ShellRoot {
       var pending = last()
       service.setUiVisible("test", true)
       expect(pending.aborted, "foreground opening aborts the warmer")
+      // A version the warmer checked is one playlist, not a fresh library: the
+      // panel still reads the whole library when it next opens.
+      expect(service.libraryCacheReady, "the library file never loaded")
+      var crawledAt = Date.now() - 7 * 3600000
+      service.libraryCrawlIncomplete = false
+      service.libraryCacheFetchedAt = crawledAt
+      expect(!service.libraryCacheFresh, "a seven-hour-old library counted as fresh")
+      service.setUiVisible("test", false)
+      service.api.cancelAll()
+      step()
+      expect(lastFor("warm").url.indexOf("fields=snapshot_id") >= 0, "the warmer did not check the version")
+      complete(200, { snapshot_id: "v2" }, lastFor("warm"))
+      expect(service.playlistById("warm").snapshotId === "v2", "the checked version was not recorded")
+      service.flushLibraryCache()
+      expect(service.libraryCacheFetchedAt === crawledAt, "one checked playlist restamped the whole library")
+      service.setUiVisible("test", true)
+      service.auth.switchingIdentity = false
+      service.auth.accessToken = "fixture-token"
+      service.auth.accessTokenExpiresAt = Date.now() + 3600000
+      service.activate("queue")
+      expect(service.savedAlbumsLoading && service.followedArtistsLoading && service.savedShowsLoading,
+        "opening the panel skipped a library refresh it needed")
+      service.api.cancelAll()
       panel.opened = true
       Qt.callLater(function() { panel.openPlaylistCache(); finishTimer.start() })
     }

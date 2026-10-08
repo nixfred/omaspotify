@@ -3,8 +3,9 @@ import Quickshell
 import "plugin" as Plugin
 
 // After a restart with idle caching on, the session is signed in but nothing has
-// asked Spotify whose account it is. Real Service, Settings, authorization and
-// transport; only the token and the HTTP wire are synthetic. The panel never opens.
+// asked Spotify whose account it is, or which playlists it has. Real Service,
+// Settings, authorization and transport; only the token and the HTTP wire are
+// synthetic. The panel never opens.
 ShellRoot {
   id: test
   Plugin.Service { id: service }
@@ -40,8 +41,7 @@ ShellRoot {
       service.auth.accessTokenExpiresAt = Date.now() + 3600000
       service.auth.loggedIn = true
       service.playlistCacheBootstrapMs = 300
-      service.playlists = [{ id: "warm", type: "playlist", kind: "context", name: "Fixture",
-        snapshotId: "v1", ownerId: "reload-account" }]
+      service.playlists = []
       service.applySettings({ cachePlaylistsOnIdle: "On" })
       watch.start()
     }
@@ -64,11 +64,27 @@ ShellRoot {
         test.complete(profile[1], 200, { id: "reload-account", display_name: "Fixture" })
         test.expect(service.currentUserId === "reload-account", "the retried profile was ignored")
         test.phase = 2
-      } else if (test.phase === 2 && test.sent("/playlists/warm").length > 0) {
+      } else if (test.phase === 2 && test.sent("/me/playlists").length > 0) {
+        test.complete(test.sent("/me/playlists")[0], 200, { items: [{ id: "warm", type: "playlist",
+          name: "Fixture", uri: "spotify:playlist:warm", snapshot_id: "v1",
+          owner: { id: "reload-account" } }], total: 1, offset: 0, limit: 50, next: null })
+        test.phase = 3
+      } else if (test.phase === 3) {
+        test.sent("/me/library/contains").forEach(function(xhr) {
+          if (xhr.readyState !== XMLHttpRequest.DONE && !xhr.aborted) test.complete(xhr, 200, [false])
+        })
+        if (!test.sent("/playlists/warm").length) return
         var warm = test.sent("/playlists/warm")[0]
         test.expect(warm.url.indexOf("fields=snapshot_id") >= 0, "warming did not start with a version check")
         test.expect(test.profileRequests().length === 2, "the profile was asked for again after it arrived")
+        test.expect(test.sent("/me/playlists").length === 1, "the playlists were asked for again after they arrived")
+        // Playlists alone are not the library: the panel still reads all of it.
+        service.flushLibraryCache()
+        test.expect(service.libraryCacheFetchedAt === 0 && !service.libraryCacheFresh,
+          "a playlists-only startup fill marked the whole library fresh")
         stop()
+        service.loadSidebarPlaylists()
+        test.expect(service.savedAlbumsLoading, "opening the panel skipped the rest of the library")
         service.api.cancelAll()
         console.log("PLAYLIST_BOOTSTRAP_PASS")
         Qt.quit()

@@ -191,6 +191,7 @@ Item {
   property bool libraryCacheReady: false
   property double libraryCacheFetchedAt: 0
   property bool libraryCrawlIncomplete: false
+  property bool libraryCrawlFinished: false
   readonly property bool libraryCacheFresh: Api.libraryCacheIsFresh(
     libraryCacheFetchedAt, Date.now(), 6 * 3600000)
   property bool savedTracksCrawling: false
@@ -956,16 +957,20 @@ Item {
     pageCache.drop(Api.queryCacheKey(["detail", "playlist", id, ""]))
   }
 
-  function saveLibraryCache() {
+  // Only a finished crawl makes the copy fresh; saving one changed item keeps its age.
+  function saveLibraryCache(crawled) {
     if (!libraryCacheReady) return
+    if (crawled === true) libraryCrawlFinished = true
     libraryCacheSaveTimer.restart()
   }
 
   function flushLibraryCache() {
     libraryCacheSaveTimer.stop()
     // An empty copy is never trusted, so a wiped or failed library is asked for again.
-    libraryCacheFetchedAt = !libraryCrawlIncomplete && playlists.concat(
-      savedAlbums, followedArtists, savedShows).length ? Date.now() : 0
+    if (libraryCrawlIncomplete || !playlists.concat(savedAlbums, followedArtists, savedShows).length)
+      libraryCacheFetchedAt = 0
+    else if (libraryCrawlFinished) libraryCacheFetchedAt = Date.now()
+    libraryCrawlFinished = false
     libraryCacheFile.setText(Api.encodeLibraryCache(playlists, savedAlbums,
       followedArtists, savedShows, libraryCacheFetchedAt))
   }
@@ -1693,7 +1698,7 @@ Item {
         if (page.next && depth < 40) return ask(page.next, null, depth + 1)
         root.spotifyPlaylists = found
         root.playlists = Api.withSpotifyPlaylists(root.playlists, found)
-        root.saveLibraryCache()
+        root.saveLibraryCache(true)
       }, { priority: "background", shared: true })
     }
     ask("/me/playlists", { limit: 50 }, 1)
@@ -1717,7 +1722,7 @@ Item {
     if (depth > 40) return
     var spec = libraryCollectionSpec(kind)
     if (!root[spec.next] || root[spec.loading]) {
-      saveLibraryCache()
+      saveLibraryCache(true)
       if (kind === "playlists") refreshPlaylistEdits()
       return
     }
@@ -1750,7 +1755,7 @@ Item {
       root[spec.loaded] = true
       if (kind === "playlists" && usingPersonalClientId)
         playlists = Api.withSpotifyPlaylists(playlists, spotifyPlaylists)
-      saveLibraryCache()
+      saveLibraryCache(true)
       if (kind === "playlists") refreshPlaylistEdits()
       return
     }
@@ -1815,7 +1820,12 @@ Item {
   // quietly, along with the playlist list when there is none to work through.
   function bootstrapPlaylistCache() {
     if (!currentUserId) loadProfile(Api.API_FOREGROUND_TIMEOUT_MS)
-    else if (!playlists.length && !playlistsLoading) fillSidebarCollection("playlists")
+    else if (!playlists.length && !playlistsLoading) {
+      // Playlists alone are not the library, so opening the panel still reads all of it.
+      libraryCrawlIncomplete = true
+      libraryCacheFetchedAt = 0
+      fillSidebarCollection("playlists")
+    }
   }
 
   function playlistById(id) {
@@ -3034,6 +3044,8 @@ Item {
         if (!kept) root.fail(error)
         return
       }
+      var normalized = Api.normalizeContext(payload, 256)
+      if (normalized) root.detailItem = normalized
       if (type === "playlist" && warmed && !onScreen && kept && payload && payload.snapshot_id
           && payload.snapshot_id === kept.item.snapshotId) {
         root.detailLoading = false
@@ -3045,8 +3057,6 @@ Item {
         return
       }
       root.detailFromCache = false
-      var normalized = Api.normalizeContext(payload, 256)
-      if (normalized) root.detailItem = normalized
       var parent = root.detailItem || item
       if (type === "artist") {
         root.loadArtistThisIs(serial, parent)
