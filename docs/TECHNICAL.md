@@ -330,3 +330,29 @@ keybinding check.
 - [spotify-player](https://github.com/aome510/spotify-player)
 - [ncspot](https://github.com/hrkfdn/ncspot)
 - [Spotify Web API](https://developer.spotify.com/documentation/web-api)
+
+### Idle playlist song cache
+
+`PlaylistCache.qml` owns a separate account-scoped `playlist-songs.json` cache.
+The opt-in `cachePlaylistsOnIdle` setting lets a one-request scheduler work only
+while the panel is closed. It fills missing first pages before round-robin deep
+paging, at least 3 s apart, with background priority and a 15 s request deadline.
+No personal-to-shared fallback is allowed for warming. Foreground use, edits,
+identity changes and logout cancel its current handle and invalidate callbacks.
+
+The idle scheduler checks completed playlists at most once an hour unless the
+library reports a changed version (foreground freshness remains five minutes).
+It compares `snapshot_id`, resumes matching partial pages, and
+verifies the version after the final page. A changed version restarts fetching;
+a changed final version discards the mixed copy. Duplicate and unavailable
+track positions are retained through normalization/cursors. Successful empty
+playlists can be cached. A refusal retries later (403/404 after an hour, other
+failures after five minutes); 429 pauses the whole warmer for five minutes in
+addition to transport Retry-After. Cache failures never change foreground status.
+
+Budgets are 512 entries, 50,000 total normalized rows, 10,000 per playlist,
+and 32 MiB estimated serialized data (two bytes per JavaScript string character).
+Warming stops at the budget rather than thrashing. JSON checkpoints run every
+10 seconds during downloading, deferred while the panel is visible. Cached
+playlists render immediately; their version/freshness checks run behind the rows.
+The existing small page cache remains available when this cache is absent.

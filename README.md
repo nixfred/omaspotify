@@ -233,7 +233,21 @@ Reopening draws cached rows immediately. After five minutes, a small
 keep their rows without downloading tracks again. Changed or unknown versions
 refresh the visible depth, and explicit reloads always fetch again. A failed
 check preserves the visible cache and leaves it stale for the next visit.
-OmaSpotify does not download every playlist in the background.
+For a library-wide cache, open **Playlists → Cache** and turn **Idle caching** on
+(or enable “Cache playlist songs while idle” in the plugin settings). Close the
+panel to let it work: it fills first pages before deeper pages, one request at a
+time, with at least three seconds between requests. It caches song lists, not
+audio; accessible lists resume after restart. Spotify version checks skip
+unchanged lists; changed lists need a new download because Spotify has no
+incremental song-diff endpoint. Rate limits pause warming; personal apps do not
+fall back to the shared app during warming.
+
+The separate library cache holds up to 512 playlists, 50,000 rows in total,
+10,000 per playlist and 32 MiB of estimated JSON data. At the budget it stops
+warming rather than evicting and redownloading the library. Longer lists still
+have Load More. Cache data expires after seven days and is scoped to the signed-in
+account; logging out removes it. This option is off by default. It cannot cache
+playlists Spotify refuses to return.
 
 ### If playback setup fails
 

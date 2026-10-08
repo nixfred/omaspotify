@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Optional idle playlist caching fills first pages across the library before
+  paging deeper, persists progress, and checks Spotify versions to skip unchanged
+  song lists. A separate bounded cache keeps these rows ready for playlist and
+  detail pages. Warming pauses for browsing, edits and rate limits and never
+  falls back from a personal app to the shared app. Open Playlists → Cache.
+
 - While Spotify is limiting requests, a page you open now loads or says
   Spotify is busy within 15 seconds. It used to sit on Loading for minutes
   behind the library refresh. When Spotify asks for a wait longer than that,

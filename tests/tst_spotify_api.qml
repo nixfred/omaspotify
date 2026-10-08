@@ -162,6 +162,18 @@ TestCase {
     compare(callbacks, 1)
   }
 
+  function test_backgroundWarmCanDeclineSharedFallback() {
+    var api = createTemporaryObject(apiComponent, testCase)
+    api.fallbackAuth = fakeSharedAuth
+    var result = 0
+    api.request("GET", "/playlists/foreign/items", null, null,
+      function(status) { result = status },
+      { priority: "background", allowFallback: false, retryRateLimit: false })
+    complete(requests[0], 403)
+    compare(result, 403)
+    compare(requests.length, 1, "warming must not hammer the shared catalog app")
+  }
+
   function test_searchFallsBackToTracksForAnInvalidType() {
     var api = createTemporaryObject(apiComponent, testCase)
     verify(api)

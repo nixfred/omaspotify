@@ -462,7 +462,7 @@ Item {
           // Refused by the personal client: try the shipped one, which still
           // reaches the catalog endpoints Spotify closed to new apps.
           // Without a session of its own, the retry would hide the refusal behind "Not logged in".
-          if (Api.shouldFallBackToSharedClient(xhr.status, job.fellBack,
+          if (job.allowFallback !== false && Api.shouldFallBackToSharedClient(xhr.status, job.fellBack,
               !!fallbackAuth && fallbackAuth.loggedIn === true, job.method, job.path)) {
             forwardToShared(job)
             return
@@ -537,6 +537,7 @@ Item {
       retried: false,
       fellBack: false,
       shared: settings.shared === true,
+      allowFallback: settings.allowFallback !== false,
       rateLimitRetries: 0,
       retryRateLimit: settings.retryRateLimit !== undefined
         ? settings.retryRateLimit === true : !background,

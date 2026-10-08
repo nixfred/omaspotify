@@ -74,6 +74,36 @@ rg -q PLAYLIST_VERSIONS_PASS "$test_root/versions-output" || {
 }
 echo 'Quickshell playlist version checks passed.'
 
+cp "$source_root/tests/integration/PlaylistWarming.qml" "$test_root/app/shell.qml"
+env PATH="$test_root/identity-bin:$PATH" QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic NO_AT_BRIDGE=1 XDG_STATE_HOME="$test_root/state" \
+  timeout 15s dbus-run-session -- qs --no-color -p "$test_root/app" > "$test_root/warming-output" 2>&1 || {
+  cat "$test_root/warming-output"
+  exit 1
+}
+rg -q PLAYLIST_WARMING_PASS "$test_root/warming-output" || {
+  cat "$test_root/warming-output"
+  exit 1
+}
+if rg -i 'ReferenceError|TypeError|binding loop|Cannot assign|Unable to assign|Failed to load configuration' "$test_root/warming-output"; then
+  exit 1
+fi
+echo 'Quickshell playlist warming checks passed.'
+
+cp "$source_root/tests/integration/PlaylistCacheLayout.qml" "$test_root/app/shell.qml"
+env QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic NO_AT_BRIDGE=1 \
+  timeout 15s dbus-run-session -- qs --no-color -p "$test_root/app" > "$test_root/cache-layout-output" 2>&1 || {
+  cat "$test_root/cache-layout-output"
+  exit 1
+}
+rg -q PLAYLIST_CACHE_LAYOUT_PASS "$test_root/cache-layout-output" || {
+  cat "$test_root/cache-layout-output"
+  exit 1
+}
+if rg -i 'ReferenceError|TypeError|binding loop|Cannot assign|Unable to assign|Failed to load configuration' "$test_root/cache-layout-output"; then
+  exit 1
+fi
+echo 'Quickshell playlist cache layout checks passed.'
+
 cp "$source_root/tests/integration/ClientSetup.qml" "$test_root/app/shell.qml"
 env QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic NO_AT_BRIDGE=1 XDG_STATE_HOME="$test_root/state" \
   timeout 15s dbus-run-session -- qs --no-color -p "$test_root/app" > "$test_root/setup-output" 2>&1 || {

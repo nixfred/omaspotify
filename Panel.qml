@@ -134,7 +134,7 @@ Item {
     && artistSearchText.trim() !== ""
   readonly property bool shortcutsBlocked: mediaContextMenu.opened
     || playlistPicker.opened || createPlaylistPopup.opened || sleepPopup.opened
-    || shortcutHelpPopup.opened || lyricsInstallPopup.opened || clientSetupPopup.opened
+    || shortcutHelpPopup.opened || lyricsInstallPopup.opened || clientSetupPopup.opened || playlistCachePopup.opened
   readonly property bool shortcutHintsEnabled: service
     ? service.shortcutHintsEnabled : true
   readonly property bool typingInField: {
@@ -348,8 +348,10 @@ Item {
   }
 
   function openClientSetup() { clientSetupPopup.open() }
+  function openPlaylistCache() { playlistCachePopup.open() }
 
   function dismissTransientPopup() {
+    if (playlistCachePopup.opened) { playlistCachePopup.close(); return true }
     if (clientSetupPopup.opened) { clientSetupPopup.close(); return true }
     if (lyricsInstallPopup.opened && (!service || !service.lyricsPluginBusy)) {
       lyricsInstallPopup.close()
@@ -1537,7 +1539,7 @@ Item {
       return handleContextMenuKey(event)
 
     if (createPlaylistPopup.opened || playlistPicker.opened
-        || shortcutHelpPopup.opened || lyricsInstallPopup.opened || clientSetupPopup.opened)
+        || shortcutHelpPopup.opened || lyricsInstallPopup.opened || clientSetupPopup.opened || playlistCachePopup.opened)
       return false
 
     if (unifiedSearchField.activeFocus && tabbing) {
@@ -2361,6 +2363,7 @@ Item {
   }
 
   ClientSetupPopup { id: clientSetupPopup; panel: root }
+  PlaylistCachePopup { id: playlistCachePopup; panel: root }
 
   ShortcutHelpPopup {
     id: shortcutHelpPopup
