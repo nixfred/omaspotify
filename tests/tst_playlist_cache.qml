@@ -209,6 +209,48 @@ TestCase {
     verify(c.suspendedUntil > clock)
     var count = requests.length; step(c); compare(requests.length, count)
   }
+  function retryAfter(value) {
+    return { getResponseHeader: function(name) {
+      return String(name).toLowerCase() === "retry-after" ? value : null } }
+  }
+  function test_longQuotaRetryAfterHoldsEveryPlaylistUntilItEnds() {
+    var c = cache([playlist("a"), playlist("b")]); c.keep(snapshot("a", 2))
+    c.tick()
+    var refusedAt = clock
+    requests[0].callback(429, { error: { reason: "QUOTA_EXCEEDED" } }, "quota",
+      retryAfter("63287"))
+    compare(c.read("a").items.length, 2, "saved rows stay readable during the refusal")
+    clock += 300001; c.tick()
+    compare(requests.length, 1, "Cache ignored the server's long quota Retry-After")
+    clock = refusedAt + 63287000 - 1; c.tick()
+    compare(requests.length, 1)
+    clock = refusedAt + 63288000; c.tick()
+    compare(requests.length, 2, "warming never resumed after the quota window")
+  }
+  function test_missingOrInvalidRetryAfterPausesFiveMinutes() {
+    var values = [null, "", "soon", "-5", "21"]
+    for (var i = 0; i < values.length; i++) {
+      requests = []
+      var c = cache([playlist("a"), playlist("b")])
+      c.tick()
+      requests[0].callback(429, null, "rate limited",
+        values[i] === null ? null : retryAfter(values[i]))
+      clock += 299999; c.tick()
+      compare(requests.length, 1, "resumed early for Retry-After " + values[i])
+      clock += 2; c.tick()
+      compare(requests.length, 2, "stayed paused for Retry-After " + values[i])
+    }
+  }
+  function test_anotherAppIsNotHeldByTheOldAppsQuota() {
+    var c = cache([playlist("a"), playlist("b")]); c.keep(snapshot("a", 2))
+    c.tick()
+    requests[0].callback(429, { error: { reason: "QUOTA_EXCEEDED" } }, "quota",
+      retryAfter("63287"))
+    step(c); compare(requests.length, 1)
+    c.identity = "app-b"; c.tick()
+    compare(requests.length, 2, "a different app inherited the old app's quota refusal")
+    compare(c.read("a").items.length, 2)
+  }
   function test_forbiddenPlaylistDoesNotBlockOthers() {
     var c = cache([playlist("a"), playlist("b")]); c.tick(); answer(null, 403, "forbidden")
     compare(step(c).path, "/playlists/b")

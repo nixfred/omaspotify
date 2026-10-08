@@ -83,12 +83,17 @@ New personal apps cannot read these playlists, and waiting for a 403 first
 fails when their playlist bucket instead returns `QUOTA_EXCEEDED`. Routing
 requires known account and owner IDs and excludes owned/collaborative playlists,
 unknown ownership, non-GET requests and account library endpoints. Pagination
-and snapshot checks retain the chosen catalog route. Without an authorized
+and snapshot checks retain the chosen catalog route, and detail continuations
+keep their ordinary queue priority. Track radio candidate probes and the reads
+behind "make this playlist your own" choose the same way from the playlist they
+already hold; the copy's writes stay on the personal app. Without an authorized
 catalog session the existing personal path remains. Idle warming still never
 uses the catalog fallback. Failure messages preserve the redacted API reason;
 a development quota refusal is not presented as a short transient wait.
 `PlaylistCatalog.qml` executes both transports and checks routing, continuation,
-cache reuse, absent identities and quota messages with synthetic sessions.
+cache reuse and version checks, detail pages, radio and copy reads, absent
+identities, quota and ordinary refusal messages and Client ID cancellation with
+synthetic sessions.
 
 The shipped developer app is shared across installations, so a refusal can
 arrive without this user having sent much at all. Development-mode quota is
@@ -397,7 +402,10 @@ a changed final version discards the mixed copy. Duplicate and unavailable
 track positions are retained through normalization/cursors. Empty playlists you
 own or collaborate on can be cached. A refusal retries later (403/404, hidden
 songs and budget refusals after an hour, other failures after five minutes); 429
-pauses the whole warmer for five minutes in addition to transport Retry-After.
+pauses the whole warmer for five minutes, or until the refusal's own
+`Retry-After` when that is longer (a development quota refusal can name many
+hours). A missing or unreadable header keeps the five-minute pause. Changing
+the Client ID lifts the pause for the new app.
 Cache failures never change foreground status.
 
 `Api.encodePlaylistSongs` stores each normalized row with only the fields that

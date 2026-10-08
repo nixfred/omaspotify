@@ -6,8 +6,12 @@
   when a personal app is configured. A personal app's exhausted playlist quota
   no longer blocks a catalog read the shared app can complete. Owned and
   collaborative playlists, account library reads and edits keep their existing
-  app; idle warming never switches to the shared app. Playlist failures display
-  the actual redacted error instead of generic advice to try again soon.
+  app; idle warming never switches to the shared app. Track radio and "make
+  this playlist your own" read foreign playlists the same way, while the copy is
+  still written by the personal app. Playlist failures display the actual
+  redacted error instead of generic advice to try again soon. Idle warming
+  waits out a refusal's full `Retry-After`, so a long developer-quota refusal no
+  longer gets retried every five minutes.
 
 - Starting a song on the displayed active receiver no longer waits for an
   unrelated playback-status refresh. Initial device discovery still waits for

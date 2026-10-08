@@ -1643,12 +1643,13 @@ Item {
   // network request; the explicit refresh control can still force one.
   // An empty page goes ahead of the queue. A cached page is already readable,
   // so its refresh uses the same pacing and recovery pause as library work.
-  function playlistReadUsesCatalog(method, path) {
+  function playlistReadUsesCatalog(method, path, known) {
     if (!usingPersonalClientId || !spotifyApi.fallbackAuth
         || spotifyApi.fallbackAuth.loggedIn !== true) return false
     var id = Api.playlistReadId(method, path)
     if (!id) return false
     var playlist = playlistById(id)
+    if (!playlist && known && String(known.id) === id) playlist = known
     if (!playlist && selectedPlaylist && String(selectedPlaylist.id) === id)
       playlist = selectedPlaylist
     if (!playlist && detailItem && detailItem.type === "playlist"
@@ -2790,7 +2791,7 @@ Item {
           return
         }
         callback(combined, "")
-      })
+      }, { shared: playlistReadUsesCatalog("GET", requestPath, playlist) })
   }
 
   function addPlaylistCopyBatches(playlist, uris, offset, expected, callback) {
@@ -3326,7 +3327,7 @@ Item {
     var type = String(parent.type || "")
     if (type === "artist") return
     detailLoading = true
-    pageRequest("GET", path, null, function(status, payload, error) {
+    spotifyApi.request("GET", path, null, null, function(status, payload, error) {
       if (serial !== root.detailSerial) return
       root.detailLoading = false
       if (error) {
@@ -3344,7 +3345,7 @@ Item {
           root.detailItems.length, root.detailRestoreTargetCount,
           root.detailNext)) root.loadMoreDetail()
       else root.detailRestoreTargetCount = 0
-    })
+    }, { shared: playlistReadUsesCatalog("GET", path) })
   }
 
   function ensureDetailItemCount(value) {
@@ -4251,8 +4252,8 @@ Item {
       return
     }
     var candidate = candidates[index]
-    spotifyApi.request("GET", "/playlists/"
-      + encodeURIComponent(String(candidate.id)) + "/items", { limit: 1 }, null,
+    var path = "/playlists/" + encodeURIComponent(String(candidate.id)) + "/items"
+    spotifyApi.request("GET", path, { limit: 1 }, null,
       function(status, payload, error) {
         if (expected !== root.radioSerial) return
         var source = payload && Array.isArray(payload.items) ? payload.items : []
@@ -4264,7 +4265,7 @@ Item {
           return
         }
         root.tryRadioPlaylist(item, candidates, index + 1, expected)
-      })
+      }, { shared: playlistReadUsesCatalog("GET", path, candidate) })
   }
 
   function requestRadioRecommendations(item, expected) {

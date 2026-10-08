@@ -345,7 +345,7 @@ Item {
   function send(path, query, callback) {
     var expected = serial
     var completed = false
-    var returned = request(path, query, function(statusCode, payload, error) {
+    var returned = request(path, query, function(statusCode, payload, error, xhr) {
       completed = true
       if (expected !== root.serial) return
       root.handle = null
@@ -354,7 +354,8 @@ Item {
         root.lastResult = "Cache request refused or failed (HTTP " + statusCode + ")"
         var id = root.work && root.work.item.id
         if (id) root.retryAt[id] = root.now() + (statusCode === 403 || statusCode === 404 ? 3600000 : 300000)
-        if (statusCode === 429) root.suspendedUntil = root.now() + 300000
+        if (statusCode === 429) root.suspendedUntil = root.now()
+          + Math.max(300000, Api.rateLimitRetryMs(Api.responseRetryAfter(xhr), 0))
         root.work = null
         return
       }
