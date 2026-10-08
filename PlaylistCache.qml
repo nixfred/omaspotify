@@ -10,12 +10,19 @@ Item {
   visible: false
   property string owner: ""
   property string identity: ""
+  // The user's choice. Off stops filling and refreshing; what is already kept
+  // stays readable until it expires or the account signs out.
   property bool warmingEnabled: false
+  property bool signedIn: false
   property bool idle: false
   property bool diskReady: false
   property string diskRaw: ""
+  property string checksRaw: ""
   property var playlists: []
   property var entries: ({})
+  // Each entry's stored form, with the rows it was made from. A check that only
+  // confirms a version reuses it, so neither the rows nor the file are redone.
+  property var chunks: ({})
   property var validated: ({})
   property var retryAt: ({})
   property var sizes: ({})
@@ -37,25 +44,44 @@ Item {
   property double nextAt: 0
   property double suspendedUntil: 0
   property bool budgetFull: false
+  property bool restoring: false
   property string lastResult: ""
-  readonly property bool canRun: warmingEnabled && idle && diskReady && owner !== ""
-  readonly property int cachedCount: Object.keys(entries).length
-  readonly property int completeCount: {
-    var keys = Object.keys(entries)
+  readonly property bool canRun: warmingEnabled && signedIn && idle && diskReady && owner !== ""
+  readonly property var libraryIds: {
+    var ids = ({})
+    var list = playlists || []
+    for (var i = 0; i < list.length; i++)
+      if (list[i] && list[i].id) ids[String(list[i].id)] = true
+    return ids
+  }
+  // Pages opened from search or an artist are kept too, but progress is about
+  // the library.
+  readonly property int cachedCount: {
     var total = 0
-    for (var i = 0; i < keys.length; i++)
-      if (!entries[keys[i]].data.next && entries[keys[i]].data.verified !== false) total++
+    for (var id in entries) if (libraryIds[id]) total++
+    return total
+  }
+  readonly property int completeCount: {
+    var total = 0
+    for (var id in entries)
+      if (libraryIds[id] && !entries[id].data.next && entries[id].data.verified !== false) total++
     return total
   }
   readonly property string progress: completeCount + "/" + playlists.length
     + " lists complete · " + cachedCount + " available locally"
-  readonly property string status: !warmingEnabled ? "Idle caching off"
-    : budgetFull ? "Cache budget reached · opened playlists still load normally"
+  readonly property string status: !warmingEnabled
+      ? (cachedCount ? "Idle caching off · " + cachedCount + " saved lists stay readable" : "Idle caching off")
+    : !signedIn ? "Waiting for Spotify sign-in"
+    : !owner ? "Waiting for your Spotify account"
+    : budgetFull ? "Cache budget reached · saved lists stay checked, others load when opened"
     : suspendedUntil > now() ? "Caching paused after Spotify refused a request"
     : !idle ? progress + " · resumes when the panel closes"
     : handle ? progress + " · downloading quietly"
     : progress + " · checking for changes"
+  // Rows, versions or cursors changed: the whole file is due.
   signal changed()
+  // Only when a list was last confirmed changed: the small checks file is due.
+  signal rechecked()
   signal versionChecked(string playlistId, string snapshotId)
 
   onCanRunChanged: if (!canRun) pause()
@@ -90,46 +116,99 @@ Item {
     return Api.queryCacheState(entry, now(), staleMs)
   }
 
-  function keep(data, checkedAt) {
+  // An empty answer for a playlist you neither own nor collaborate on is
+  // Spotify hiding its songs, not a playlist without any.
+  function hidesSongs(item) {
+    return Api.playlistItemsHiddenByApi(200, Api.playlistOwnedByUser(item, owner),
+      !!item && item.collaborative === true, owner !== "")
+  }
+
+  function keep(data) {
+    return warmingEnabled && store(data, now(), null)
+  }
+
+  function frame(entriesText) {
+    return "{\"version\":2,\"owner\":" + JSON.stringify(owner) + ",\"entries\":{"
+      + entriesText + "}}"
+  }
+
+  // Everything an entry adds to the file, assuming the widest timestamp and
+  // flag, so the file can never be larger than the budget it was kept to.
+  function entryBytes(id, chunk) {
+    return 2 * (JSON.stringify(String(id)).length + chunk.text.length
+      + ":{\"updatedAt\":,\"verified\":false,\"data\":},".length + 16)
+  }
+
+  function chunkFor(id, data, prepared) {
+    var held = prepared || chunks[id]
+    if (held && held.item === data.item && held.items === data.items && held.next === data.next)
+      return held
+    var encoded = Api.encodePlaylistSongs(data.items)
+    return { item: data.item, items: data.items, next: data.next, text: JSON.stringify({
+      item: data.item, next: String(data.next || ""), refs: encoded.refs, rows: encoded.rows }) }
+  }
+
+  function store(data, updatedAt, prepared) {
     if (!owner || !diskReady || !data || !data.item || !data.item.id
         || !Array.isArray(data.items)) return false
     var id = String(data.item.id)
     var capped = Api.cappedPageSnapshot(data, itemLimit)
+    if (!capped.items.length && hidesSongs(capped.item)) return false
     var existing = read(id)
     // Opening a warmed page must not truncate its full copy back to 50 rows.
     if (existing && existing.item.snapshotId && existing.item.snapshotId === capped.item.snapshotId
         && existing.items.length > capped.items.length) capped = existing
-    var entry = { updatedAt: checkedAt === undefined ? now() : checkedAt, data: capped }
-    var bytes = JSON.stringify(entry).length * 2
-    var rows = capped.items.length
-    var totalBytes = bytes
-    var totalRows = rows
-    var keys = Object.keys(entries)
+    var chunk = chunkFor(id, capped, prepared)
+    var bytes = entryBytes(id, chunk)
+    var totalBytes = 2 * frame("").length + bytes
+    var totalRows = capped.items.length
+    var next = Api.shallowCopy(entries)
+    var expired = false
+    var keys = Object.keys(next)
     for (var i = 0; i < keys.length; i++) {
       if (keys[i] === id) continue
+      // Past its age an entry is never drawn again, so it gives its room back.
+      if (!Api.timestampIsFresh(next[keys[i]].updatedAt, now(), maxAgeMs)) {
+        delete next[keys[i]]
+        delete chunks[keys[i]]
+        delete sizes[keys[i]]
+        expired = true
+        continue
+      }
       totalBytes += Number(sizes[keys[i]]) || 0
-      totalRows += entries[keys[i]].data.items.length
+      totalRows += next[keys[i]].data.items.length
     }
-    if ((!entries[id] && keys.length >= maxEntries) || totalBytes > maxBytes || totalRows > maxRows) {
-      budgetFull = true
-      return false
+    if (expired) budgetFull = false
+    var fits = (next.hasOwnProperty(id) || Object.keys(next).length < maxEntries)
+      && totalBytes <= maxBytes && totalRows <= maxRows
+    var rewritten = expired || chunk !== chunks[id]
+    if (fits) {
+      // A changed list can give room back without being removed. Let missing
+      // lists try again; unchanged checks must not repeatedly reopen a full budget.
+      if (existing && (capped.items.length < existing.items.length || bytes < sizes[id]))
+        budgetFull = false
+      next[id] = { updatedAt: updatedAt, data: capped }
+      chunks[id] = chunk
+      sizes[id] = bytes
+    } else budgetFull = true
+    if (fits || expired) entries = next
+    if (!restoring && (expired || fits)) {
+      if (rewritten) changed()
+      else rechecked()
     }
-    var next = Api.shallowCopy(entries)
-    next[id] = entry
-    entries = next
-    sizes[id] = bytes
-    changed()
-    return true
+    return fits
   }
 
   function drop(id) {
     var key = String(id || "")
     // Edits cancel any in-flight read, including metadata/final verification.
     pause()
+    delete retryAt[key]
+    if (!entries.hasOwnProperty(key)) return
     var next = Api.shallowCopy(entries)
     delete next[key]
+    delete chunks[key]
     delete sizes[key]
-    delete retryAt[key]
     entries = next
     budgetFull = false
     changed()
@@ -138,40 +217,77 @@ Item {
   function clear() {
     pause()
     entries = ({})
+    chunks = ({})
     sizes = ({})
     retryAt = ({})
     diskRaw = ""
+    checksRaw = ""
     budgetFull = false
     suspendedUntil = 0
     changed()
   }
 
   function serialize() {
-    diskRaw = JSON.stringify({ version: 1, owner: owner, entries: entries })
+    var parts = []
+    for (var id in entries)
+      parts.push(JSON.stringify(id) + ":{\"updatedAt\":" + Math.floor(Number(entries[id].updatedAt) || 0)
+        + ",\"verified\":" + (entries[id].data.verified !== false)
+        + ",\"data\":" + chunks[id].text + "}")
+    diskRaw = frame(parts.join(","))
     return diskRaw
+  }
+
+  function serializeChecks() {
+    var checked = ({})
+    for (var id in entries) {
+      var data = entries[id].data
+      checked[id] = [Math.floor(Number(entries[id].updatedAt) || 0), data.verified !== false,
+        String(data.item.snapshotId || ""), data.items.length]
+    }
+    checksRaw = JSON.stringify({ version: 1, owner: owner, checked: checked })
+    return checksRaw
   }
 
   function restore() {
     entries = ({})
+    chunks = ({})
     sizes = ({})
     retryAt = ({})
     budgetFull = false
-    if (!owner || !diskReady || diskRaw.length * 2 > maxBytes + 4096) return
+    if (!owner || !diskReady || diskRaw.length * 2 > maxBytes) return
     var record = Api.parseJson(diskRaw, ({}))
-    if (!record || record.version !== 1 || record.owner !== owner) return
+    if (!record || record.version !== 2 || record.owner !== owner) return
+    var checks = Api.parseJson(checksRaw, ({}))
+    var checked = checks && checks.version === 1 && checks.owner === owner && checks.checked
+      ? checks.checked : ({})
     var stored = record.entries || ({})
-    var keys = Object.keys(stored)
-    for (var i = 0; i < keys.length; i++) {
-      var entry = stored[keys[i]]
-      if (!entry || !Api.timestampIsFresh(entry.updatedAt, now(), maxAgeMs)
-          || !entry.data || !entry.data.item || String(entry.data.item.id) !== keys[i]
-          || !Array.isArray(entry.data.items)) continue
-      keep(entry.data, entry.updatedAt)
+    restoring = true
+    for (var id in stored) {
+      var entry = stored[id]
+      var chunk = entry && entry.data
+      if (!chunk || !chunk.item || String(chunk.item.id) !== id) continue
+      var items = Api.decodePlaylistSongs(chunk)
+      if (!items) continue
+      var data = { item: chunk.item, items: items, next: String(chunk.next || ""),
+        verified: entry.verified !== false }
+      var updatedAt = Number(entry.updatedAt) || 0
+      // A later check of the same rows lives in the small checks file.
+      var check = checked[id]
+      if (Array.isArray(check) && Number(check[0]) > updatedAt
+          && check[2] === String(data.item.snapshotId || "") && check[3] === items.length) {
+        updatedAt = Number(check[0])
+        data.verified = check[1] === true
+      }
+      if (!Api.timestampIsFresh(updatedAt, now(), maxAgeMs)) continue
+      store(data, updatedAt, { item: data.item, items: items, next: data.next,
+        text: JSON.stringify(chunk) })
     }
+    restoring = false
   }
 
   // Breadth first: all first pages before any deep paging, then round robin.
   // Full pages are compared with snapshot_id at most once an hour (foreground freshness remains five minutes).
+  // At the budget, lists already kept are still checked; new ones wait.
   function candidate() {
     var list = playlists || []
     for (var phase = 0; phase < 2; phase++) {
@@ -180,6 +296,7 @@ Item {
         var item = list[index]
         if (!item || !item.id || (retryAt[item.id] || 0) > now()) continue
         var kept = read(item.id)
+        if (!kept && budgetFull) continue
         if (phase === 0 && kept) continue
         if (phase === 1 && kept && !kept.next && kept.verified !== false
             && Api.timestampIsFresh(entries[item.id].updatedAt, now(), recheckMs)
@@ -215,7 +332,7 @@ Item {
   }
 
   function tick() {
-    if (!canRun || handle || budgetFull || now() < nextAt || now() < suspendedUntil
+    if (!canRun || handle || now() < nextAt || now() < suspendedUntil
         || typeof request !== "function") return
     if (!work) {
       var item = candidate()
@@ -252,7 +369,14 @@ Item {
           root.work = null
           return
         }
-        root.keep(data)
+        if (!root.keep(data)) {
+          // Hidden or over budget: either way, asking again soon changes nothing.
+          if (!data.items.length && root.hidesSongs(data.item))
+            root.lastResult = "Spotify hides the songs of playlists you neither own nor collaborate on, so those are not cached"
+          root.retryAt[id] = root.now() + 3600000
+          root.work = null
+          return
+        }
         if (!page.next) root.work = { item: data.item, kept: data, stage: "verify" }
         else root.work = null
       })

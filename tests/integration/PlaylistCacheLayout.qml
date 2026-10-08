@@ -55,8 +55,8 @@ ShellRoot {
         mockService.playlistCacheStatus = "Caching paused after Spotify refused a request"
         mockService.playlistCacheResult = "Cache request refused or failed (HTTP 429)"
       } else if (phase === 2 || phase === 5) {
-        mockService.playlistCacheStatus = "Cache budget reached · opened playlists still load normally"
-        mockService.playlistCacheResult = "Cache request refused or failed (HTTP 403)"
+        mockService.playlistCacheStatus = "Cache budget reached · saved lists stay checked, others load when opened"
+        mockService.playlistCacheResult = "Spotify hides the songs of playlists you neither own nor collaborate on, so those are not cached"
       } else if (phase === 3) {
         var out = Quickshell.env("OMASPOTIFY_LAYOUT_OUTPUT")
         if (out) popup.contentItem.grabToImage(function(image) { image.saveToFile(out + "/cache-1024.png") })

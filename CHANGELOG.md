@@ -7,6 +7,11 @@
   song lists. A separate bounded cache keeps these rows ready for playlist and
   detail pages. Warming pauses for browsing, edits and rate limits and never
   falls back from a personal app to the shared app. Open Playlists → Cache.
+  Rows are stored compactly, so 32 MiB holds about 40,000 to 50,000 songs, and
+  confirming an unchanged playlist no longer rewrites the song file. After a
+  restart it finds your account without the panel being opened. Off keeps saved
+  rows readable but adds and updates nothing. Playlists whose songs Spotify
+  hides keep their explanation instead of being cached as empty.
 
 - While Spotify is limiting requests, a page you open now loads or says
   Spotify is busy within 15 seconds. It used to sit on Loading for minutes

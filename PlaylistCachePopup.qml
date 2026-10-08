@@ -47,7 +47,7 @@ Popup {
         }
         Text {
           width: parent.width
-          text: "Checks playlist versions and skips unchanged lists. Changed lists are downloaded again. Progress survives restart."
+          text: "Checks playlist versions and skips unchanged lists. Changed lists are downloaded again. Progress survives restart. Off stops downloads and updates; saved lists stay readable until they are a week old or you log out."
           color: popup.panel.muted
           font.family: popup.panel.fontFamily
           font.pixelSize: Style.font.bodySmall
@@ -76,7 +76,7 @@ Popup {
         }
         Text {
           width: parent.width
-          text: "Song lists only, no audio downloads. Budget: 32 MiB, 50,000 songs, 512 playlists; up to 10,000 rows per playlist. Spotify may refuse some playlists."
+          text: "Song lists only, no audio downloads. Room for about 40,000 to 50,000 songs (32 MiB) in up to 512 playlists, 10,000 per playlist. Spotify hides the songs of playlists you only follow."
           color: popup.panel.muted
           font.family: popup.panel.fontFamily
           font.pixelSize: Style.font.bodySmall

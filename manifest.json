@@ -247,7 +247,7 @@
           "On"
         ],
         "defaultValue": "Off",
-        "description": "Slowly cache accessible song lists while the panel is closed. Compare versions and resume after restart. Limits: 32 MiB, 50,000 rows, 512 playlists; no audio downloads."
+        "description": "Slowly cache accessible song lists while the panel is closed. Compare versions and resume after restart. Room for about 40,000 to 50,000 songs (32 MiB, 512 playlists); no audio downloads. Off keeps saved lists readable but adds nothing."
       },
       {
         "key": "clientId",

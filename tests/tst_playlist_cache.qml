@@ -1,6 +1,7 @@
 import QtQuick
 import QtTest
 import ".." as Plugin
+import "../Api.js" as Api
 
 TestCase {
   id: test
@@ -15,6 +16,7 @@ TestCase {
       identity: "app-a"
       diskReady: true
       warmingEnabled: true
+      signedIn: true
       idle: true
       now: function() { return test.clock }
       request: function(path, query, callback) {
@@ -25,11 +27,62 @@ TestCase {
       abort: function(job) { job.aborted = true }
     }
   }
+  SignalSpy { id: changedSpy; signalName: "changed" }
+  SignalSpy { id: recheckedSpy; signalName: "rechecked" }
   function init() { clock = 10000; requests = [] }
   function cache(list) {
     return createTemporaryObject(component, test, { playlists: list || [playlist("a")] })
   }
   function playlist(id, version) { return { id: id, type: "playlist", snapshotId: version || "v1" } }
+  function owned(id) { var item = playlist(id); item.ownerId = "account-a"; return item }
+  function spotifyId(prefix, n) {
+    var tail = n.toString(36)
+    return prefix + "0000000000000000000000".slice(0, 22 - prefix.length - tail.length) + tail
+  }
+  function spotifyArtist(n) {
+    var id = spotifyId("ar", n)
+    return { external_urls: { spotify: "https://open.spotify.com/artist/" + id },
+      href: "https://api.spotify.com/v1/artists/" + id, id: id, name: "Artist Name " + n,
+      type: "artist", uri: "spotify:artist:" + id }
+  }
+  // Shaped like GET /playlists/{id}/items. Within a playlist an album tends to
+  // appear about one and a half times and an artist about two and a half.
+  function spotifyItem(list, n) {
+    var albumNumber = list * 10000 + Math.floor(n * 2 / 3)
+    var albumId = spotifyId("al", albumNumber)
+    var artists = [spotifyArtist(list * 10000 + Math.floor(n * 2 / 5))]
+    if (n % 3 === 0) artists.push(spotifyArtist(list * 10000 + 5000 + n % 7))
+    var art = "https://i.scdn.co/image/ab67616d"
+    var image = spotifyId("im", albumNumber)
+    var id = spotifyId("tr", list * 10000 + n)
+    return { added_at: "2025-0" + (1 + n % 9) + "-1" + (n % 10) + "T12:34:56Z",
+      added_by: { id: "account-a" }, is_local: false, primary_color: null,
+      item: { album: { album_type: "album", artists: artists.slice(0, 1),
+        available_markets: ["US", "CA"], external_urls: { spotify: "https://open.spotify.com/album/" + albumId },
+        href: "https://api.spotify.com/v1/albums/" + albumId, id: albumId,
+        images: [{ height: 640, url: art + "0000b273" + image, width: 640 },
+          { height: 300, url: art + "00001e02" + image, width: 300 },
+          { height: 64, url: art + "00004851" + image, width: 64 }],
+        name: "Album Title " + albumNumber, release_date: "20" + (10 + n % 15) + "-04-1" + (n % 10),
+        release_date_precision: "day", total_tracks: 12, type: "album", uri: "spotify:album:" + albumId },
+      artists: artists, disc_number: 1, duration_ms: 150000 + n * 37, explicit: n % 5 === 0,
+      external_ids: { isrc: "USRC1" + n }, external_urls: { spotify: "https://open.spotify.com/track/" + id },
+      href: "https://api.spotify.com/v1/tracks/" + id, id: id, is_local: false, is_playable: true,
+      name: "Song Title " + n + " (Remastered)", popularity: 50, preview_url: null,
+      track_number: 1 + n % 12, type: "track", uri: "spotify:track:" + id } }
+  }
+  // Normalized exactly as the warmer does it, positions included.
+  function realisticRows(list, count) {
+    var values = []
+    for (var n = 0; n < count; n++) values.push(spotifyItem(list, n))
+    var offset = 0
+    return Api.normalizePage({ items: values }, function(value) {
+      var position = offset++
+      var track = Api.normalizeTrack(value, 96)
+      if (track) track.playlistPosition = position
+      return track
+    }).items
+  }
   function track(id) { return { id: id, name: id, uri: "spotify:track:" + id, artists: [] } }
   function snapshot(id, count, next, version) {
     var rows = []
@@ -130,7 +183,7 @@ TestCase {
     compare(c.read("a").items.length, 300)
   }
   function test_successfulEmptyPlaylistIsRemembered() {
-    var c = cache(); start(c); answer({ items: [], next: null })
+    var c = cache([owned("a")]); start(c); answer({ items: [], next: null })
     step(c); answer({ snapshot_id: "v1" })
     verify(c.read("a")); compare(c.read("a").items.length, 0)
     var count = requests.length; step(c); compare(requests.length, count)
@@ -176,6 +229,29 @@ TestCase {
     compare(c.read("a").items.length, 3); c.tick(); compare(requests.length, 0)
     c.drop("a"); verify(!c.budgetFull); verify(c.keep(snapshot("b", 1)))
   }
+  function test_atTheBudgetKeptListsAreStillChecked() {
+    var c = cache([playlist("a"), playlist("b")]); c.maxRows = 3
+    verify(c.keep(snapshot("a", 3))); verify(!c.keep(snapshot("b", 1))); verify(c.budgetFull)
+    clock += c.recheckMs + 1
+    compare(step(c).path, "/playlists/a", "a full cache still compares the lists it holds")
+    answer({ snapshot_id: "v1" })
+    compare(c.freshness("a"), "fresh")
+    var count = requests.length; step(c); compare(requests.length, count, "a new list waits for room")
+  }
+  function test_smallerChangedPlaylistReturnsRoom() {
+    var c = cache([playlist("a"), playlist("b")]); c.maxRows = 3
+    verify(c.keep(snapshot("a", 3)))
+    verify(!c.keep(snapshot("b", 1))); verify(c.budgetFull)
+    var shorter = snapshot("a", 1); shorter.item.snapshotId = "v2"
+    verify(c.keep(shorter)); verify(!c.budgetFull, "a changed smaller playlist returns room")
+    compare(step(c).path, "/playlists/b", "the scheduler resumes filling missing lists")
+  }
+  function test_expiredEntriesGiveTheirRoomBack() {
+    var c = cache(); c.maxEntries = 1; verify(c.keep(snapshot("a", 1)))
+    clock += c.maxAgeMs + 1
+    verify(c.keep(snapshot("b", 1)), "an entry too old to draw still held the only slot")
+    compare(Object.keys(c.entries), ["b"])
+  }
   function test_entryAndByteBudgets() {
     var c = cache(); c.maxEntries = 1; c.keep(snapshot("a", 1)); verify(!c.keep(snapshot("b", 1)))
     c.clear(); c.maxBytes = 10; verify(!c.keep(snapshot("a", 1)))
@@ -194,5 +270,126 @@ TestCase {
     var c = cache(); c.keep(snapshot("a", 2, "/playlists/a/items?offset=2"))
     c.tick(); answer({ snapshot_id: "v1" }); step(c); answer({})
     compare(c.read("a").items.length, 2); verify(c.retryAt.a > clock)
+  }
+  function test_storedRowsReadBackExactly() {
+    var rows = realisticRows(3, 60)
+    var offset = rows.length
+    var odd = [spotifyItem(3, 4), { track: null },
+      { added_at: "", is_local: true, item: { id: null, uri: "spotify:local:Band:Tape:Demo:181",
+        name: "Demo", artists: [{ name: "Band" }], album: { name: "Tape", images: [] },
+        type: "track", duration_ms: 181000, is_local: true } },
+      { added_at: "2025-01-01T00:00:00Z", item: { type: "episode", id: "ep1", name: "Episode",
+        uri: "spotify:episode:ep1", description: "Talk", duration_ms: 3600000,
+        images: [{ url: "https://i.scdn.co/image/episode", width: 64 }],
+        show: { type: "show", id: "sh1", name: "Show", publisher: "Host",
+          images: [{ url: "https://i.scdn.co/image/show", width: 64 }] } } }]
+    var extra = Api.normalizePage({ items: odd }, function(value) {
+      var track = Api.normalizeTrack(value, 96)
+      if (track) track.playlistPosition = offset++
+      return track
+    }).items
+    // Shapes the codec does not know are stored as they are.
+    extra.push({ id: "bare", uri: "spotify:track:bare", playlistPosition: offset++ })
+    var unusual = Api.shallowCopy(rows[0]); unusual.n = "clashes with a short name"; extra.push(unusual)
+    rows = rows.concat(extra)
+    var next = "https://api.spotify.com/v1/playlists/mix/items?offset=" + offset + "&limit=50"
+    var c = cache([owned("mix")]); verify(c.keep({ item: owned("mix"), items: rows, next: next }))
+    var raw = c.serialize()
+    verify(raw.length * 4 < JSON.stringify(rows).length, "stored rows are a quarter of their normalized size")
+    var restored = cache([owned("mix")]); restored.diskRaw = raw; restored.restore()
+    compare(JSON.stringify(restored.read("mix").items), JSON.stringify(rows))
+    compare(restored.read("mix").next, next)
+    compare(restored.read("mix").items[0].albumItem.artists[0].name, rows[0].artists[0].name)
+  }
+  function test_measuredLibraryCapacity() {
+    var c = cache([]); c.maxRows = 1000000
+    var rows = 0
+    var lists = 0
+    for (var list = 0; list < c.maxEntries && !c.budgetFull; list++) {
+      var item = owned("list" + list)
+      var data = { item: item, items: realisticRows(list, 400), next: "" }
+      if (c.keep(data)) { rows += data.items.length; lists++ }
+    }
+    console.log("Library song cache: " + rows + " realistic rows in " + lists
+      + " playlists fit the " + c.maxBytes + "-byte budget")
+    verify(rows >= 40000, "32 MiB holds only " + rows + " realistic rows")
+  }
+  function test_fileAtTheBudgetRestoresWhole() {
+    var c = cache([])
+    var lists = []
+    for (var i = 0; i < 40; i++) {
+      lists.push({ item: owned("list" + i), items: realisticRows(i, 30), next: "" })
+      verify(c.keep(lists[i]))
+    }
+    var used = 2 * c.frame("").length
+    for (var id in c.sizes) used += c.sizes[id]
+    var raw = c.serialize()
+    verify(raw.length * 2 <= used, "the file is never larger than the budget counted for it")
+    var restored = cache([]); restored.maxBytes = used; restored.diskRaw = raw; restored.restore()
+    compare(Object.keys(restored.entries).length, 40, "a file filled to the budget restores whole")
+    verify(!restored.budgetFull)
+    compare(JSON.stringify(restored.read("list7").items), JSON.stringify(lists[7].items))
+    var tight = cache([]); tight.maxBytes = used - 2; tight.diskRaw = raw; tight.restore()
+    compare(Object.keys(tight.entries).length, 39, "one entry over the budget is refused, not the file")
+    verify(tight.budgetFull)
+  }
+  function test_unchangedRecheckOnlyRecordsTheCheck() {
+    var c = cache(); finish(c)
+    changedSpy.target = c; recheckedSpy.target = c
+    changedSpy.clear(); recheckedSpy.clear()
+    clock += c.recheckMs + 1
+    compare(step(c).path, "/playlists/a"); answer({ snapshot_id: "v1" })
+    compare(changedSpy.count, 0, "a confirmed version must not rewrite the song file")
+    compare(recheckedSpy.count, 1)
+    compare(c.freshness("a"), "fresh")
+    c.keep(snapshot("a", 2))
+    compare(changedSpy.count, 1, "new rows are a content change")
+  }
+  function test_checksFileCarriesConfirmationsAcrossRestart() {
+    var c = cache(); finish(c); var raw = c.serialize()
+    var longer = cache(); longer.keep(snapshot("a", 2)); var otherRows = longer.serialize()
+    clock += c.maxAgeMs - 10000
+    compare(step(c).path, "/playlists/a"); answer({ snapshot_id: "v1" })
+    var checks = c.serializeChecks()
+    clock += 10000
+    var restored = cache(); restored.checksRaw = checks; restored.diskRaw = raw; restored.restore()
+    compare(restored.read("a").items[0].id, "one", "a list confirmed this week outlives its week-old rows")
+    compare(restored.freshness("a"), "fresh")
+    var unchecked = cache(); unchecked.diskRaw = raw; unchecked.restore()
+    compare(unchecked.read("a"), null)
+    var other = cache(); other.checksRaw = checks; other.diskRaw = otherRows; other.restore()
+    compare(other.read("a"), null, "a check of other rows does not refresh these")
+  }
+  function test_offKeepsSavedRowsReadableButAddsNone() {
+    var c = cache([playlist("a"), playlist("b")]); verify(c.keep(snapshot("a", 2)))
+    var raw = c.serialize()
+    c.warmingEnabled = false
+    verify(!c.keep(snapshot("b", 2)), "Off must not fill the cache from opened pages")
+    compare(c.read("a").items.length, 2)
+    compare(c.status, "Idle caching off · 1 saved lists stay readable")
+    var restored = cache(); restored.warmingEnabled = false
+    restored.diskRaw = raw; restored.restore()
+    compare(restored.read("a").items.length, 2, "Off still reads what was saved")
+    c.drop("a"); compare(c.read("a"), null, "edits still forget rows while Off")
+  }
+  function test_hiddenSongsAreNotCachedAsAnEmptyList() {
+    var c = cache(); start(c); answer({ items: [], next: null })
+    compare(c.read("a"), null)
+    verify(c.retryAt.a >= clock + 3500000)
+    verify(c.lastResult.indexOf("hides the songs") >= 0)
+    verify(!c.keep({ item: playlist("a"), items: [], next: "" }))
+    var count = requests.length; step(c); compare(requests.length, count)
+    verify(c.keep({ item: owned("a"), items: [], next: "" }), "your own empty playlist is a real answer")
+  }
+  function test_progressCountsOnlyLibraryPlaylists() {
+    var c = cache(); c.keep(snapshot("a", 1)); c.keep(snapshot("opened-from-search", 1))
+    compare(c.cachedCount, 1); compare(c.completeCount, 1)
+    compare(c.progress, "1/1 lists complete · 1 available locally")
+  }
+  function test_statusExplainsWhatItWaitsFor() {
+    var c = cache(); c.signedIn = false
+    compare(c.status, "Waiting for Spotify sign-in")
+    c.signedIn = true; c.owner = ""
+    compare(c.status, "Waiting for your Spotify account")
   }
 }

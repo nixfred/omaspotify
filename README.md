@@ -240,14 +240,23 @@ time, with at least three seconds between requests. It caches song lists, not
 audio; accessible lists resume after restart. Spotify version checks skip
 unchanged lists; changed lists need a new download because Spotify has no
 incremental song-diff endpoint. Rate limits pause warming; personal apps do not
-fall back to the shared app during warming.
+fall back to the shared app during warming. After a restart it looks up your
+account by itself, without the panel being opened.
 
 The separate library cache holds up to 512 playlists, 50,000 rows in total,
-10,000 per playlist and 32 MiB of estimated JSON data. At the budget it stops
-warming rather than evicting and redownloading the library. Longer lists still
-have Load More. Cache data expires after seven days and is scoped to the signed-in
-account; logging out removes it. This option is off by default. It cannot cache
-playlists Spotify refuses to return.
+10,000 per playlist and 32 MiB of estimated data. Rows are stored compactly: in
+testing with realistic Spotify playlists, about 50,000 songs fit in 32 MiB when
+albums and artists repeat within a playlist, and about 40,000 when every song is
+from a different album. At the budget it stops adding playlists rather than
+evicting and redownloading the library, but it keeps checking the ones it holds.
+Longer lists still have Load More. Cache data expires after seven days without a
+version check and is scoped to the signed-in account; logging out removes it.
+Spotify hides the songs of playlists you neither own nor collaborate on, so
+those are not cached.
+
+This option is off by default. While it is on, playlists you open are added to
+the library cache too. Turning it off stops downloading and updating; song lists
+already saved stay readable until they are a week old or you log out.
 
 ### If playback setup fails
 

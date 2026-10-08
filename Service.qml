@@ -47,6 +47,7 @@ Item {
   readonly property string libraryCachePath: stateDir + "/library.json"
   readonly property string queryCachePath: stateDir + "/queries.json"
   readonly property string playlistCachePath: stateDir + "/playlist-songs.json"
+  readonly property string playlistChecksPath: stateDir + "/playlist-songs-checked.json"
   readonly property string artworkDir: cacheHome + "/omaspotify/art"
 
   readonly property var defaultSettingValues: ({
@@ -407,6 +408,11 @@ Item {
   property var playlistItemsRequest: null
   property string currentUserId: ""
   property string currentUserName: ""
+  property bool profileLoading: false
+  property int profileSerial: 0
+  property int playlistCacheBootstrapMs: 60000
+  property bool playlistSongsRead: false
+  property bool playlistChecksRead: false
   readonly property string playlistItemsEmptyMessage: Api.playlistItemsEmptyMessage(
     selectedPlaylist, playlistItems.length, playlistItemsError,
     playlistItemsStatus, currentUserId, authManager.customClientId === "")
@@ -927,7 +933,8 @@ Item {
     detailCacheSaveTimer.stop()
     if (!detailCacheKey || !detailSettled) return
     pageCache.write(detailCacheKey, detailSnapshot)
-    if (detailItem && detailItem.type === "playlist")
+    // A message stands in for rows Spotify would not return; it is not a song list.
+    if (detailItem && detailItem.type === "playlist" && !detailMessage)
       playlistLibraryCache.keep({ item: detailItem, items: detailItems, next: detailNext })
   }
 
@@ -1786,15 +1793,29 @@ Item {
     else markItemsSaved(page.items, true)
   }
 
-  function loadProfile() {
-    if (currentUserId) return
+  function loadProfile(timeoutMs) {
+    if (currentUserId || profileLoading) return
     var expected = dataSerial
+    var identity = authManager.resolvedClientId
+    var serial = ++profileSerial
+    profileLoading = true
     spotifyApi.request("GET", "/me", null, null, function(status, payload, error) {
-      if (expected !== root.dataSerial || error || !payload) return
+      if (serial !== root.profileSerial) return
+      root.profileLoading = false
+      if (expected !== root.dataSerial || identity !== authManager.resolvedClientId
+          || error || !payload) return
       root.currentUserId = String(payload.id || "")
       root.currentUserName = String(payload.display_name || "")
       root.refreshPlaylistEdits()
-    }, { priority: "background" })
+    }, { priority: "background", timeoutMs: timeoutMs })
+  }
+
+  // Idle caching keeps songs per account, and after a restart nothing asks who
+  // is signed in until the panel opens. While it is on, that is found out
+  // quietly, along with the playlist list when there is none to work through.
+  function bootstrapPlaylistCache() {
+    if (!currentUserId) loadProfile(Api.API_FOREGROUND_TIMEOUT_MS)
+    else if (!playlists.length && !playlistsLoading) fillSidebarCollection("playlists")
   }
 
   function playlistById(id) {
@@ -4560,6 +4581,8 @@ Item {
     selectedPlaylist = null
     currentUserId = ""
     currentUserName = ""
+    profileLoading = false
+    profileSerial++
     queue = []
     queueLoaded = false
     devices = []
@@ -4667,7 +4690,11 @@ Item {
   function forgetPersonalRecord() {
     playlistLibraryCache.clear()
     playlistSongsSaveTimer.stop()
-    if (playlistLibraryCache.diskReady) playlistSongsFile.setText("")
+    playlistChecksSaveTimer.stop()
+    if (playlistLibraryCache.diskReady) {
+      playlistSongsFile.setText("")
+      playlistChecksFile.setText("")
+    }
     detailCacheKey = ""
     playlistCacheKey = ""
     detailRevalidating = false
@@ -4938,7 +4965,9 @@ Item {
     id: playlistLibraryCache
     owner: root.currentUserId
     identity: authManager.resolvedClientId
-    warmingEnabled: root.cachePlaylistsOnIdle && root.accountConnected
+    warmingEnabled: root.cachePlaylistsOnIdle
+    signedIn: root.accountConnected
+    diskReady: root.playlistSongsRead && root.playlistChecksRead
     idle: !root.uiVisible && !root.playlistActionBusy && !root.playlistsLoading
       && !root.searchLoading
     playlists: root.playlists
@@ -4949,6 +4978,7 @@ Item {
     }
     abort: function(handle) { spotifyApi.abortRequest(handle) }
     onChanged: if (diskReady && !playlistSongsSaveTimer.running) playlistSongsSaveTimer.start()
+    onRechecked: if (diskReady && !playlistChecksSaveTimer.running) playlistChecksSaveTimer.start()
     onVersionChecked: function(playlistId, snapshotId) {
       var existing = root.playlistById(playlistId)
       if (!existing || existing.snapshotId === snapshotId) return
@@ -4969,6 +4999,26 @@ Item {
     }
   }
 
+  // Confirming a version only moves a timestamp, so it is saved on its own,
+  // in a file a few kilobytes long, rather than by rewriting every song.
+  Timer {
+    id: playlistChecksSaveTimer
+    interval: 60000
+    onTriggered: if (playlistLibraryCache.owner)
+      playlistChecksFile.setText(playlistLibraryCache.serializeChecks())
+  }
+
+  Timer {
+    id: playlistCacheBootstrapTimer
+    interval: root.playlistCacheBootstrapMs
+    repeat: true
+    triggeredOnStart: true
+    running: root.cachePlaylistsOnIdle && root.libraryCacheReady
+      && (root.accountConnected || !authManager.sessionChecked)
+      && (!root.currentUserId || (!root.playlists.length && !root.playlistsLoaded))
+    onTriggered: root.bootstrapPlaylistCache()
+  }
+
   FileView {
     id: playlistSongsFile
     path: root.playlistCachePath
@@ -4977,9 +5027,23 @@ Item {
     printErrors: false
     onLoaded: {
       playlistLibraryCache.diskRaw = text()
-      playlistLibraryCache.diskReady = true
+      root.playlistSongsRead = true
     }
-    onLoadFailed: playlistLibraryCache.diskReady = true
+    onLoadFailed: root.playlistSongsRead = true
+    onSaveFailed: if (!ensureStateDir.running) ensureStateDir.running = true
+  }
+
+  FileView {
+    id: playlistChecksFile
+    path: root.playlistChecksPath
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      playlistLibraryCache.checksRaw = text()
+      root.playlistChecksRead = true
+    }
+    onLoadFailed: root.playlistChecksRead = true
     onSaveFailed: if (!ensureStateDir.running) ensureStateDir.running = true
   }
 

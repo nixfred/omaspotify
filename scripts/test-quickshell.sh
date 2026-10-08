@@ -89,6 +89,21 @@ if rg -i 'ReferenceError|TypeError|binding loop|Cannot assign|Unable to assign|F
 fi
 echo 'Quickshell playlist warming checks passed.'
 
+cp "$source_root/tests/integration/PlaylistBootstrap.qml" "$test_root/app/shell.qml"
+env PATH="$test_root/identity-bin:$PATH" QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic NO_AT_BRIDGE=1 XDG_STATE_HOME="$test_root/bootstrap-state" \
+  timeout 15s dbus-run-session -- qs --no-color -p "$test_root/app" > "$test_root/bootstrap-output" 2>&1 || {
+  cat "$test_root/bootstrap-output"
+  exit 1
+}
+rg -q PLAYLIST_BOOTSTRAP_PASS "$test_root/bootstrap-output" || {
+  cat "$test_root/bootstrap-output"
+  exit 1
+}
+if rg -i 'ReferenceError|TypeError|binding loop|Cannot assign|Unable to assign|Failed to load configuration' "$test_root/bootstrap-output"; then
+  exit 1
+fi
+echo 'Quickshell playlist cache startup checks passed.'
+
 cp "$source_root/tests/integration/PlaylistCacheLayout.qml" "$test_root/app/shell.qml"
 env QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic NO_AT_BRIDGE=1 \
   timeout 15s dbus-run-session -- qs --no-color -p "$test_root/app" > "$test_root/cache-layout-output" 2>&1 || {

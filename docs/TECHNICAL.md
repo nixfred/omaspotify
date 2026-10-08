@@ -339,20 +339,47 @@ while the panel is closed. It fills missing first pages before round-robin deep
 paging, at least 3 s apart, with background priority and a 15 s request deadline.
 No personal-to-shared fallback is allowed for warming. Foreground use, edits,
 identity changes and logout cancel its current handle and invalidate callbacks.
+Rows are kept per account, so while the setting is on and a session is signed in
+(or not yet checked), the service loads the profile in the background with the
+same 15 s deadline, retrying each minute, and fetches the playlist list if none
+is on disk. A profile answer for an older identity or account is discarded.
+
+Every write goes through `PlaylistCache.keep()`. It refuses everything while the
+setting is off (rows already saved stay readable), and it refuses an empty song
+list for a playlist the account neither owns nor collaborates on: Spotify hides
+those songs, and the detail page explains that instead of showing an empty list.
 
 The idle scheduler checks completed playlists at most once an hour unless the
 library reports a changed version (foreground freshness remains five minutes).
 It compares `snapshot_id`, resumes matching partial pages, and
 verifies the version after the final page. A changed version restarts fetching;
 a changed final version discards the mixed copy. Duplicate and unavailable
-track positions are retained through normalization/cursors. Successful empty
-playlists can be cached. A refusal retries later (403/404 after an hour, other
-failures after five minutes); 429 pauses the whole warmer for five minutes in
-addition to transport Retry-After. Cache failures never change foreground status.
+track positions are retained through normalization/cursors. Empty playlists you
+own or collaborate on can be cached. A refusal retries later (403/404, hidden
+songs and budget refusals after an hour, other failures after five minutes); 429
+pauses the whole warmer for five minutes in addition to transport Retry-After.
+Cache failures never change foreground status.
+
+`Api.encodePlaylistSongs` stores each normalized row with only the fields that
+cannot be rebuilt (links from ids, album name, artwork and date from the album,
+subtitle from the artists, empty defaults), under short keys, and lists each
+artist or album once per playlist. `decodePlaylistSongs` returns rows identical
+to the normalized ones; rows of any other shape are stored unchanged. A typical
+row drops from about 2,200 JSON characters to about 340–400.
 
 Budgets are 512 entries, 50,000 total normalized rows, 10,000 per playlist,
-and 32 MiB estimated serialized data (two bytes per JavaScript string character).
-Warming stops at the budget rather than thrashing. JSON checkpoints run every
-10 seconds during downloading, deferred while the panel is visible. Cached
-playlists render immediately; their version/freshness checks run behind the rows.
-The existing small page cache remains available when this cache is absent.
+and 32 MiB estimated serialized data (two bytes per JavaScript string character),
+counted on the stored form including each entry's key and frame and the file
+envelope, so a file written at the budget always restores whole. Measured with
+realistic playlist payloads, 32 MiB holds about 50,000 rows (about 40,000 when no
+album repeats). At the budget no new playlist is added, but held ones are still
+rechecked and refreshed; entries older than seven days give their room back.
+
+`playlist-songs.json` is rewritten only when rows, versions or cursors change,
+at most every 10 seconds and deferred while the panel is visible. Each entry's
+stored form is kept, so a checkpoint joins strings instead of re-encoding rows.
+A version check that only confirms a list updates its time in
+`playlist-songs-checked.json`, a few kilobytes written at most once a minute;
+on restore it applies only to the same version and row count. Cached playlists
+render immediately; their version/freshness checks run behind the rows. The
+existing small page cache remains available when this cache is absent.
