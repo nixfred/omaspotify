@@ -138,6 +138,36 @@ ShellRoot {
       expect(service.detailItem.imageUrl === "https://i.scdn.co/image/new-cover-300"
         && service.detailItems.length === 50 && playlistRequests().length === asked,
         "the saved cover was not drawn on a fresh open")
+      // A newer version read on the Playlists page keeps the detail-size cover.
+      service.playlists = service.playlists.map(function(row) {
+        return service.playlistWithVersion(row, "warm", "v2")
+      })
+      service.openPlaylist(service.playlists[0]); step()
+      expect(lastFor("warm").url.indexOf("/playlists/warm/items") >= 0, "the new version was not read")
+      complete(200, { items: rows, offset: 0, next: null }, lastFor("warm"))
+      service.keepPlaylistPage()
+      expect(service.playlistCache.read("warm").item.snapshotId === "v2", "the new version was not kept")
+      asked = playlistRequests().length
+      service.openDetail(service.playlists[0])
+      expect(service.detailItem.imageUrl === "https://i.scdn.co/image/new-cover-300"
+        && service.detailItems.length === 50 && playlistRequests().length === asked,
+        "a version saved from the Playlists page drew a list-size cover: " + service.detailItem.imageUrl)
+      // A list first saved from the Playlists page uses the cover its listing gave.
+      var listed = service.libraryMapper("playlist")({ id: "listed", type: "playlist", name: "Listed",
+        uri: "spotify:playlist:listed", snapshot_id: "l1", owner: { id: "warming-account" },
+        images: mosaic("listed") })
+      expect(listed.imageUrl === "https://i.scdn.co/image/listed-60", "the listing fixture is not a mosaic")
+      service.openPlaylist(listed); step()
+      complete(200, { items: rows.slice(0, 5), offset: 0, next: null }, lastFor("listed"))
+      service.keepPlaylistPage()
+      var listedReads = function() {
+        return requests.filter(function(x) { return x.url.indexOf("/playlists/listed") >= 0 }).length
+      }
+      asked = listedReads()
+      service.openDetail(listed)
+      expect(service.detailItem.imageUrl === "https://i.scdn.co/image/listed-300"
+        && service.detailItems.length === 5 && listedReads() === asked,
+        "a list saved from the Playlists page drew a list-size cover: " + service.detailItem.imageUrl)
       // Spotify hides the songs of a playlist you only follow: that is a message,
       // not an empty list to keep and show without it next time.
       var followed = { id: "followed", type: "playlist", kind: "context", name: "Followed",
@@ -185,8 +215,8 @@ ShellRoot {
       service.api.cancelAll()
       step()
       expect(lastFor("warm").url.indexOf("fields=snapshot_id") >= 0, "the warmer did not check the version")
-      complete(200, { snapshot_id: "v2" }, lastFor("warm"))
-      expect(service.playlistById("warm").snapshotId === "v2", "the checked version was not recorded")
+      complete(200, { snapshot_id: "v3" }, lastFor("warm"))
+      expect(service.playlistById("warm").snapshotId === "v3", "the checked version was not recorded")
       service.flushLibraryCache()
       expect(service.libraryCacheFetchedAt === crawledAt, "one checked playlist restamped the whole library")
       service.setUiVisible("test", true)

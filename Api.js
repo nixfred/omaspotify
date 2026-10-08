@@ -3079,6 +3079,9 @@ function normalizeContext(value, imageWidth) {
 function normalizePlaylist(value, imageWidth) {
   var normalized = normalizeContext(value, imageWidth)
   if (!normalized || normalized.type !== "playlist") return null
+  // Lists draw the small cover; the playlist's own page draws it at 256 px.
+  var source = value || {}
+  normalized.coverUrl = imageFor((source.playlist || source).images, 256)
   return normalized
 }
 

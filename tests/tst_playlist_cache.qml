@@ -311,6 +311,60 @@ TestCase {
     compare(c.read("a").item.imageUrl, "https://i.scdn.co/image/b-300")
     compare(c.read("a").items.map(function(row) { return row.id }), ["one", "two", "three"])
   }
+  function test_coverThatDoesNotFitStillConfirmsTheRows() {
+    var c = cache()
+    c.tick(); answer({ snapshot_id: "v1", images: mosaic("a") })
+    step(c); answer({ items: [{ track: track("one") }], offset: 0, next: null })
+    step(c); answer({ snapshot_id: "v1", images: mosaic("a") })
+    var used = 2 * c.frame("").length
+    for (var id in c.sizes) used += c.sizes[id]
+    c.maxBytes = used
+    changedSpy.target = c; recheckedSpy.target = c
+    changedSpy.clear(); recheckedSpy.clear()
+    var held = c.read("a")
+    clock += c.recheckMs + 1
+    compare(step(c).path, "/playlists/a")
+    answer({ snapshot_id: "v1", images: mosaic("a-custom-cover-with-a-much-longer-address") })
+    compare(changedSpy.count, 0, "a cover over the budget rewrote the song file")
+    compare(recheckedSpy.count, 1, "the unchanged rows were not confirmed")
+    compare(c.read("a").item.imageUrl, "https://i.scdn.co/image/a-300")
+    verify(c.read("a").items === held.items)
+    compare(c.read("a").item.snapshotId, "v1"); compare(c.read("a").next, "")
+    compare(c.freshness("a"), "fresh")
+    var count = requests.length
+    for (var i = 0; i < 5; i++) step(c)
+    compare(requests.length, count, "a cover that does not fit was asked for every few seconds")
+    clock += c.recheckMs + 1
+    step(c)
+    compare(requests.length, count + 1, "the list was not checked again an hour later")
+  }
+  function test_playlistsPageKeepsTheDetailSizeCover() {
+    var c = cache([playlist("a"), playlist("b")])
+    var listed = Api.normalizePlaylist({ id: "a", type: "playlist", name: "A", snapshot_id: "v1",
+      owner: { id: "account-a" }, images: mosaic("a") }, 96)
+    compare(listed.imageUrl, "https://i.scdn.co/image/a-60")
+    compare(listed.coverUrl, "https://i.scdn.co/image/a-300")
+    verify(c.keep(c.withHeldCover({ item: listed, items: [track("one")], next: "" })))
+    compare(c.read("a").item.imageUrl, "https://i.scdn.co/image/a-300", "a new list kept the list-size cover")
+    // A row saved before rows listed their larger cover.
+    var plain = Api.shallowCopy(listed); delete plain.coverUrl
+    verify(c.keep(c.withHeldCover({ item: plain, items: [track("one"), track("two")], next: "" })))
+    compare(c.read("a").item.imageUrl, "https://i.scdn.co/image/a-300", "the same version lost its cover")
+    var newer = Api.shallowCopy(plain); newer.snapshotId = "v2"
+    verify(c.keep(c.withHeldCover({ item: newer, items: [track("three")], next: "" })))
+    compare(c.read("a").item.imageUrl, "https://i.scdn.co/image/a-300", "a new version lost the held cover")
+    var relisted = Api.normalizePlaylist({ id: "a", type: "playlist", name: "A", snapshot_id: "v3",
+      owner: { id: "account-a" }, images: mosaic("b") }, 96)
+    verify(c.keep(c.withHeldCover({ item: relisted, items: [track("four")], next: "" })))
+    compare(c.read("a").item.imageUrl, "https://i.scdn.co/image/b-300", "a newly listed cover was ignored")
+    compare(c.read("a").items[0].id, "four")
+    var held = c.read("a")
+    changedSpy.target = c; recheckedSpy.target = c
+    changedSpy.clear(); recheckedSpy.clear()
+    verify(c.keep(c.withHeldCover(held)))
+    compare(changedSpy.count, 0, "confirming the held copy rewrote the song file")
+    compare(recheckedSpy.count, 1)
+  }
   function test_entryAndByteBudgets() {
     var c = cache(); c.maxEntries = 1; c.keep(snapshot("a", 1)); verify(!c.keep(snapshot("b", 1)))
     c.clear(); c.maxBytes = 10; verify(!c.keep(snapshot("a", 1)))

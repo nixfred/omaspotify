@@ -348,6 +348,12 @@ Every write goes through `PlaylistCache.keep()`. It refuses everything while the
 setting is off (rows already saved stay readable), and it refuses an empty song
 list for a playlist the account neither owns nor collaborates on: Spotify hides
 those songs, and the detail page explains that instead of showing an empty list.
+Library playlist rows also carry `coverUrl`, the 256 px cover from the same
+listing, because the detail page draws a cached list's header at that size. A
+list saved from the Playlists page keeps the cover already held for the same
+version, otherwise the listed `coverUrl`, otherwise the cover held before. A
+version check whose new cover no longer fits the budget still confirms the
+unchanged rows, so the list is not asked about again until its next hourly check.
 
 The idle scheduler checks completed playlists at most once an hour unless the
 library reports a changed version (foreground freshness remains five minutes).

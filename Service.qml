@@ -945,7 +945,7 @@ Item {
         || playlistItemsError) return
     if (playlistFromCache) return
     pageCache.write(playlistCacheKey, playlistSnapshot)
-    playlistLibraryCache.keep(playlistSnapshot)
+    playlistLibraryCache.keep(playlistLibraryCache.withHeldCover(playlistSnapshot))
   }
 
   // Anything that edits a playlist makes what we kept of it wrong.
@@ -2573,7 +2573,7 @@ Item {
         var version = String(payload && payload.snapshot_id || "")
         if (version && version === String(kept.item.snapshotId || "")) {
           if (!onScreen) pageCache.write(cacheKey, kept)
-          if (!onScreen) playlistLibraryCache.keep(kept)
+          if (!onScreen) playlistLibraryCache.keep(playlistLibraryCache.withHeldCover(kept))
           if (Api.playlistRestoreShouldContinue(root.playlistItems.length,
               root.playlistRestoreTargetCount, root.playlistItemsNext))
             root.loadPlaylistItems(true)
@@ -3050,7 +3050,7 @@ Item {
           && payload.snapshot_id === kept.item.snapshotId) {
         root.detailLoading = false
         root.detailRevalidating = false
-        playlistLibraryCache.keep(playlistLibraryCache.withCover(kept, normalized ? normalized.imageUrl : ""))
+        playlistLibraryCache.confirm(kept, normalized ? normalized.imageUrl : "")
         if (Api.playlistRestoreShouldContinue(root.detailItems.length,
             root.detailRestoreTargetCount, root.detailNext)) root.loadMoreDetail()
         else root.detailRestoreTargetCount = 0

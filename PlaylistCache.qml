@@ -216,6 +216,22 @@ Item {
     return next
   }
 
+  // A confirmed version always keeps its rows, even when a new cover does not fit yet.
+  function confirm(data, cover) {
+    var covered = withCover(data, cover)
+    return keep(covered) || (covered !== data && keep(data))
+  }
+
+  // The Playlists page shows covers at list size. What it saves keeps the cover held
+  // for the same version, else the larger one the library lists, else the one held before.
+  function withHeldCover(data) {
+    if (!data || !data.item) return data
+    var held = read(data.item.id)
+    var heldCover = held ? String(held.item.imageUrl || "") : ""
+    return withCover(data, held && held.item.snapshotId === data.item.snapshotId
+      ? heldCover : String(data.item.coverUrl || "") || heldCover)
+  }
+
   function drop(id) {
     var key = String(id || "")
     // Edits cancel any in-flight read, including metadata/final verification.
@@ -413,7 +429,7 @@ Item {
         if (verifying) {
           if (version === root.work.item.snapshotId) {
             kept.verified = true
-            root.keep(root.withCover(kept, cover))
+            root.confirm(kept, cover)
           }
           else root.drop(id)
           root.work = null
@@ -425,7 +441,7 @@ Item {
         if (cover) current.imageUrl = cover
         if (kept && version === kept.item.snapshotId && !kept.next) {
           kept.verified = true
-          root.keep(root.withCover(kept, cover))
+          root.confirm(kept, cover)
           root.work = null
         } else root.work = { item: current, kept: kept && version === kept.item.snapshotId ? kept : null, stage: "items" }
       })
