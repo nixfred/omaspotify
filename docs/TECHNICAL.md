@@ -230,8 +230,12 @@ own interactive read, so a background rate-limit pause cannot hold it. If that
 read fails, the click reports the error instead of playing on this computer. A
 ready local socket remains preferred. A running local receiver that Spotify
 has reported since its current start can use the Web API immediately when
-that socket is not ready, instead of first waiting five seconds for it. Clicks
-during a start or socket wait stay on that path, which plays the newest song.
+that socket is unavailable, instead of first waiting five seconds for it. A
+connected socket that is not ready means the receiver is registering its
+session again, so Connect is not used. Clicks during that, a start or a socket
+wait stay pending, and the newest song plays once the socket is ready. A song
+that is sent or dropped ends its socket wait, so the next click is not held
+by it.
 
 New playback keeps Spotify's currently active device. An explicit
 choice in the Devices view takes priority, and the app's local device is used

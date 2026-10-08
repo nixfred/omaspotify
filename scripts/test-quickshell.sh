@@ -191,7 +191,7 @@ rg -q '"command":"load".*"offset_uri":"spotify:track:clicked"' "$test_root/local
 echo 'Quickshell local playback test passed.'
 
 cp "$source_root/tests/integration/PlaybackDispatch.qml" "$test_root/app/shell.qml"
-mkdir -p "$test_root/dispatch-runtime"
+mkdir -p "$test_root/dispatch-runtime/omaspotify"
 env PATH="$test_root/identity-bin:$PATH" QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic NO_AT_BRIDGE=1 XDG_STATE_HOME="$test_root/dispatch-state" \
   XDG_RUNTIME_DIR="$test_root/dispatch-runtime" \
   timeout 15s dbus-run-session -- qs --no-color -p "$test_root/app" > "$test_root/dispatch-output" 2>&1 || {

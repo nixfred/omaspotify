@@ -7,7 +7,8 @@
   its own short refresh, bounded to two seconds without rate-limit retries,
   and reports a failure instead of playing on this computer. A running local
   receiver that Spotify has registered also uses Connect immediately if its
-  socket is not ready, rather than waiting a fixed five seconds first.
+  socket is unavailable, rather than waiting a fixed five seconds first. While
+  that receiver reconnects its session, the newest song waits for it instead.
 
 - Optional idle playlist caching fills first pages across the library before
   paging deeper, persists progress, and checks Spotify versions to skip unchanged

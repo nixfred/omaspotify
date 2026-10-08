@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import "plugin" as Plugin
 
 // Real Service/transport dispatch with a held status response. Neither the
@@ -10,6 +11,40 @@ ShellRoot {
   property var requests: []
   property int stage: 0
   property double probeStarted: 0
+  property double waitStarted: 0
+  readonly property string runtimeDir: String(Quickshell.env("XDG_RUNTIME_DIR") || "")
+  property bool backendServing: false
+  property var backendPeer: null
+  property var backendLoads: []
+
+  // Stands in for the backend socket, only in the fixture's private runtime.
+  SocketServer {
+    active: test.backendServing
+    path: test.runtimeDir + "/omaspotify/backend.sock"
+    handler: Socket {
+      id: peer
+      onConnectionStateChanged: {
+        if (!connected) return
+        test.backendPeer = peer
+        // The process is up, but its Spotify session is registering again.
+        test.backendSend({ type: "event",
+          state: { lifecycle: "starting", session_connected: false } })
+      }
+      parser: SplitParser {
+        splitMarker: "\n"
+        onRead: function(line) { test.backendRead(line) }
+      }
+    }
+  }
+  function backendSend(message) {
+    backendPeer.write(JSON.stringify(message) + "\n")
+    backendPeer.flush()
+  }
+  function backendRead(line) {
+    var message = JSON.parse(line)
+    if (message.command === "load") backendLoads = backendLoads.concat([message])
+    backendSend({ type: "response", id: message.id, ok: true, result: {} })
+  }
 
   function expect(value, message) { if (!value) throw new Error(message) }
   function song(uri) { return { type: "track", uri: "spotify:track:" + uri } }
@@ -178,7 +213,7 @@ ShellRoot {
         stage = 3
         interval = 1000
         restart()
-      } else {
+      } else if (stage === 3) {
         var listed = live("/me/player/devices")
         expect(writes().length === 0 && listed.length === 1,
           "Started receiver was not looked up before playback")
@@ -187,6 +222,45 @@ ShellRoot {
         expect(writes().length === 1 && writes()[0].url.indexOf("device_id=local") >= 0
           && JSON.parse(writes()[0].body).uris[0] === "spotify:track:cold-second",
           "The newest song did not play once the receiver registered")
+        // That song's socket wait is over, so the next click goes out at once.
+        service.playItem(song("after-register"), null, "", "")
+        expect(writes().length === 2 && writes()[1].url.indexOf("device_id=local") >= 0
+          && JSON.parse(writes()[1].body).uris[0] === "spotify:track:after-register",
+          "Fresh registered receiver kept waiting on an obsolete socket timer")
+        reset()
+        expect(/\/dispatch-runtime$/.test(runtimeDir),
+          "Refusing to serve a backend socket outside the fixture runtime")
+        runningLocalReceiver(false)
+        backendServing = true
+        waitStarted = Date.now()
+        stage = 4
+        interval = 100
+        restart()
+      } else if (stage === 4) {
+        if (!(service.backend.connected && service.backend.lifecycle === "starting")) {
+          expect(Date.now() - waitStarted < 5000, "Fixture backend socket never connected")
+          restart()
+          return
+        }
+        // A registered receiver lost its session; Connect would reach the
+        // interrupted one, so both clicks wait and the newest is kept.
+        service.playItem(song("reconnect-first"), null, "", "")
+        service.playItem(song("reconnect-second"), null, "", "")
+        expect(writes().length === 0 && backendLoads.length === 0,
+          "Click used Connect while the receiver was registering its session")
+        expect(service.pendingPlaybackBody
+          && service.pendingPlaybackBody.uris[0] === "spotify:track:reconnect-second",
+          "The newest click did not stay pending during the reconnect")
+        backendSend({ type: "event", state: { lifecycle: "ready", session_connected: true } })
+        stage = 5
+        interval = 600
+        restart()
+      } else {
+        expect(writes().length === 0, "Reconnected receiver was reached through Connect")
+        expect(backendLoads.length === 1
+          && JSON.stringify(backendLoads[0]).indexOf("spotify:track:reconnect-second") >= 0,
+          "The newest song did not play once the session was ready")
+        backendServing = false
         service.daemon.serviceActive = false
         console.log("PLAYBACK_DISPATCH_PASS")
         Qt.quit()

@@ -3978,6 +3978,8 @@ Item {
     pendingPlaybackMessage = ""
     pendingPlaybackRadio = null
     pendingPlaybackSerial = 0
+    localSocketWaitTimer.stop()
+    localSocketWaitAttempts = 0
     if (keepActivation !== true) localActivationRequested = false
   }
 
@@ -3998,11 +4000,13 @@ Item {
       waitForLocalSocketThenPlay(playbackSerial)
       return
     }
-    // Connect needs this receiver registered by the current start; a click
-    // during a start or socket wait stays on that path as the newest song.
+    // Connect needs this receiver registered by the current start. A socket
+    // that is connected but not ready is registering its session again, and
+    // a click during that, a start or a socket wait stays pending as the
+    // newest song until the socket is ready.
     if (target && target.local && target.id && String(target.id) === localDeviceId
         && daemonManager.running && !daemonManager.busy
-        && !localSocketWaitTimer.running) {
+        && !backendClient.connected && !localSocketWaitTimer.running) {
       localActivationRequested = false
       sendPendingPlayback(Api.playbackTargetDeviceId(target, selectedDeviceExplicit))
       return
