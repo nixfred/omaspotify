@@ -110,7 +110,9 @@ an attempt it holds, so a shared cooldown is named as such. Removing or changing
 the fallback identity cancels requests it is still carrying, without callbacks,
 as signing out does. Cancelling empties the shared queue before any of its
 slots is freed, so a queued action cannot be sent during cancellation. Every request logs where its time
-went — queueing, token refresh, or the network — which is what makes a slow call
+went — queueing, token refresh, or the network — and ends with the app that sent
+it (`personal` or `catalog`), since both transports log into one stream and a
+quota refusal has to be pinned on one of them. That is what makes a slow call
 diagnosable at all. See `docs/LIBRARY-DATA.md` for the measurements.
 
 After a rate-limit response, optional library work and automatic checks of
@@ -390,21 +392,27 @@ listing, because the detail page draws a cached list's header at that size. A
 list saved from the Playlists page keeps the cover already held for the same
 version, otherwise the listed `coverUrl`, otherwise the cover held before. A
 version check whose new cover no longer fits the budget still confirms the
-unchanged rows, so the list is not asked about again until its next hourly check.
+unchanged rows, so the list is not asked about again until its next daily check.
 
-The idle scheduler checks completed playlists at most once an hour unless the
-library reports a changed version (foreground freshness remains five minutes).
+The idle scheduler checks completed playlists at most once a day unless the
+library reports a changed version (foreground freshness remains five minutes;
+an opened list checks itself, and the six-hourly library listing names changed
+versions, so an hourly sweep of every held list only spent quota).
 It compares `snapshot_id` (asking for `snapshot_id,images`, so each list keeps the
 address of its cover at the detail page's 256 px size; no image is downloaded),
 resumes matching partial pages, and
 verifies the version after the final page. A changed version restarts fetching;
 a changed final version discards the mixed copy. Duplicate and unavailable
 track positions are retained through normalization/cursors. Empty playlists you
-own or collaborate on can be cached. A refusal retries later (403/404, hidden
-songs and budget refusals after an hour, other failures after five minutes); 429
-pauses the whole warmer for five minutes, or until the refusal's own
-`Retry-After` when that is longer (a development quota refusal can name many
-hours). A missing or unreadable header keeps the five-minute pause. Changing
+own or collaborate on can be cached. A refusal retries later (403 and hidden
+songs after a week, since a personal app is never shown those lists; 404 after a
+day; budget refusals after an hour; other failures after five minutes). Week-long
+waits are written to `playlist-songs-checked.json` under `refused` and restored
+with it, so a restart does not ask about every unreadable list again. 429
+pauses the whole warmer for five minutes, or six hours when the body names
+`QUOTA_EXCEEDED`, or until the refusal's own `Retry-After` when that is longer
+(a development quota refusal can name many hours). A missing or unreadable
+header keeps those pauses. Changing
 the Client ID lifts the pause for the new app.
 Cache failures never change foreground status.
 

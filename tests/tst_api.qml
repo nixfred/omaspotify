@@ -647,6 +647,30 @@ TestCase {
     verify(line.indexOf("abc123") < 0)
   }
 
+  // Two transports log into one stream; a refusal has to name the app it cost.
+  function test_requestTimingLine_endsWithTheAppThatPaid() {
+    var line = Api.requestTimingLine("GET", "/playlists/abc", { wireMs: 40 },
+      { priority: "background", app: "catalog" })
+    verify(line.indexOf("background catalog") >= 0, line)
+    var unnamed = Api.requestTimingLine("GET", "/me", ({}), ({}))
+    verify(unnamed.indexOf("normal") === unnamed.length - "normal".length,
+      "no app leaves the line as it was")
+  }
+
+  // Spotify's spent daily quota looks like a rate limit on the wire, apart from
+  // the reason in the body.
+  function test_quotaExceededPayload_readsTheReason() {
+    verify(Api.quotaExceededPayload({ error: { status: 429, reason: "QUOTA_EXCEEDED" } }))
+    verify(!Api.quotaExceededPayload({ error: { status: 429, message: "Too many requests" } }))
+    verify(!Api.quotaExceededPayload(null))
+    verify(!Api.quotaExceededPayload("QUOTA_EXCEEDED"))
+  }
+
+  function test_resumeCandidateFreshness_isMinutesNotSeconds() {
+    verify(Api.RESUME_CANDIDATE_FRESH_MS >= 600000,
+      "an idle panel polling every fifteen seconds must not refetch the last play each time")
+  }
+
   // The sidebar mixes four kinds of thing, so it can be narrowed to one.
   function test_libraryTypeFilter_narrowsToOneKind() {
     var rows = [

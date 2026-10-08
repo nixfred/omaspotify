@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Idle warming spends far less of a personal app's daily quota. A held list
+  is compared with Spotify once a day instead of once an hour (the library
+  listing still triggers a check as soon as it names a different version, and
+  an opened list still checks itself after five minutes). A list the app may
+  not read (403, or an empty answer for a list you neither own nor collaborate
+  on) is left alone for a week instead of being asked about every hour, and
+  that is remembered across restarts in the checks file. A `QUOTA_EXCEEDED`
+  refusal pauses warming for six hours when Spotify names no `Retry-After`.
+  Together these were about 250 requests an hour on a 119-playlist library.
+  The idle resume candidate (the song Play continues with when nothing is
+  loaded) is refreshed when a play ends and at most every fifteen minutes
+  otherwise, instead of on every status poll that found nothing playing, which
+  was 900 requests a day from an open panel. Every logged request line now ends
+  with the app that sent it (`personal` or `catalog`), and a quota refusal's
+  message carries Spotify's `Retry-After` when there is one.
+
 - Opened foreign playlists use the already-authorized catalog app directly
   when a personal app is configured. A personal app's exhausted playlist quota
   no longer blocks a catalog read the shared app can complete. Owned and

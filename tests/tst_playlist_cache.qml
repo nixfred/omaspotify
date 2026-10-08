@@ -256,6 +256,45 @@ TestCase {
     compare(step(c).path, "/playlists/b")
     verify(c.retryAt.a >= clock + 3500000)
   }
+  // A personal app is never shown a list it was refused once, so asking each
+  // hour was two wasted requests per list; the checks file carries the wait
+  // across a restart, where retryAt used to start empty.
+  function test_forbiddenPlaylistWaitsAWeekAndSurvivesRestore() {
+    var c = cache([playlist("a"), playlist("b")])
+    recheckedSpy.target = c; recheckedSpy.clear()
+    c.tick(); answer(null, 403, "forbidden")
+    verify(c.retryAt.a >= clock + c.refusedRetryMs - 1)
+    compare(recheckedSpy.count, 1, "the wait is worth a checks-file write")
+    var raw = c.serialize(); var checks = c.serializeChecks()
+    verify(checks.indexOf("\"refused\"") >= 0)
+    clock += c.recheckMs
+    var restored = cache([playlist("a"), playlist("b")])
+    restored.checksRaw = checks; restored.diskRaw = raw; restored.restore()
+    compare(step(restored).path, "/playlists/b", "a refused list is skipped after a restart too")
+    clock += c.refusedRetryMs
+    var later = cache([playlist("a")]); later.checksRaw = checks; later.diskRaw = raw; later.restore()
+    compare(step(later).path, "/playlists/a", "an expired wait is not restored")
+  }
+  function test_hiddenSongsWaitAWeekAndAreRemembered() {
+    var c = cache(); recheckedSpy.target = c; recheckedSpy.clear()
+    start(c); answer({ items: [], next: null })
+    verify(c.retryAt.a >= clock + c.refusedRetryMs - 1)
+    compare(recheckedSpy.count, 1)
+  }
+  function test_spentQuotaPausesForHoursWithoutARetryAfter() {
+    var c = cache(); c.keep(snapshot("a", 2)); clock += c.recheckMs + 1
+    c.tick(); answer({ error: { status: 429, message: "Too many requests", reason: "QUOTA_EXCEEDED" } }, 429, "quota")
+    verify(c.suspendedUntil >= clock + c.quotaPauseMs, "a spent daily quota is not a five-minute wait")
+    verify(c.lastResult.indexOf("daily quota") >= 0)
+    compare(c.read("a").items.length, 2)
+    var count = requests.length; clock += 3600000; step(c); compare(requests.length, count)
+  }
+  function test_plainRateLimitStillPausesFiveMinutes() {
+    var c = cache(); c.keep(snapshot("a", 2)); clock += c.recheckMs + 1
+    c.tick(); answer({ error: { status: 429, message: "Too many requests" } }, 429, "busy")
+    verify(c.suspendedUntil >= clock + 300000)
+    verify(c.suspendedUntil < clock + c.quotaPauseMs)
+  }
   function test_oneRequestAtATimeAndSpacing() {
     var c = cache(); c.tick(); c.tick(); compare(requests.length, 1)
     answer({ snapshot_id: "v1" }); c.tick(); compare(requests.length, 1)

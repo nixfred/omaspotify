@@ -20,6 +20,8 @@ Item {
   // one and there is nothing to fall back to.
   property var fallbackAuth: null
   property var fallbackTransport: null
+  // Named in every logged line, so a refusal can be blamed on the right app.
+  property string appLabel: "personal"
 
   property var searchRequest: null
   property int searchSerial: 0
@@ -172,7 +174,8 @@ Item {
         inFlight: requestsInFlight,
         background: backgroundInFlight,
         queued: requestQueue.length,
-        priority: job.priority
+        priority: job.priority,
+        app: appLabel
       }) + (error ? ": " + Api.redact(error) : ""))
     var entry = {
       route: String(job.path || "").split("?")[0].replace(/^https:\/\/api.spotify.com\/v1/, "")
@@ -276,13 +279,15 @@ Item {
   }
 
   function quotaExceeded(payload) {
-    return !!payload && !!payload.error
-      && payload.error.reason === "QUOTA_EXCEEDED"
+    return Api.quotaExceededPayload(payload)
   }
 
   function requestError(status, payload, xhr, fallback) {
-    if (status === 429 && quotaExceeded(payload))
+    if (status === 429 && quotaExceeded(payload)) {
+      var wait = Api.responseRetryAfter(xhr)
       return "Spotify refused this request because the developer quota for this app is used up. It stays refused until Spotify resets that quota."
+        + (wait ? " Spotify asks for " + wait + " s." : "")
+    }
     if (status === 429)
       return Api.rateLimitMessage(Api.responseRetryAfter(xhr))
     return Api.responseError(status, payload, fallback)
@@ -444,7 +449,7 @@ Item {
               + "; pausing every request for "
               + Api.apiCooldownMs(now(), rateLimitedUntil) + " ms"
               + " (retry " + job.rateLimitRetries
-              + ", background gap now " + backgroundSpacingMs + " ms)")
+              + ", background gap now " + backgroundSpacingMs + " ms) " + appLabel)
             var resumeAt = Api.apiJobPriority(job) >= 1
               ? interactiveLimitedUntil : rateLimitedUntil
             if (job.retryRateLimit !== false

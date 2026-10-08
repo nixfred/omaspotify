@@ -258,6 +258,10 @@ var API_MAX_RATE_LIMIT_RETRIES = 4
 var API_FOREGROUND_TIMEOUT_MS = 15000
 // Let the shared budget recover before optional library work starts again.
 var API_BACKGROUND_RECOVERY_MS = 60000
+// How long the idle resume candidate (the last play, for Play with nothing
+// loaded) is trusted before an idle status poll may fetch it again. A play
+// ending refreshes it at once regardless.
+var RESUME_CANDIDATE_FRESH_MS = 900000
 
 function rateLimitRetryMs(retryAfter, attempt) {
   var value = String(retryAfter || "").trim()
@@ -284,6 +288,13 @@ function responseRetryAfter(xhr) {
   var value = xhr.getResponseHeader("Retry-After")
   if (!value) value = xhr.getResponseHeader("retry-after")
   return value ? String(value) : ""
+}
+
+// A development app's daily quota is spent, as opposed to a rolling-window
+// rate limit: Spotify names it in the 429 body, and waiting seconds does not help.
+function quotaExceededPayload(payload) {
+  return !!payload && !!payload.error
+    && payload.error.reason === "QUOTA_EXCEEDED"
 }
 
 function apiRequestIsMutating(method) {
@@ -3384,6 +3395,8 @@ function requestTimingLine(method, path, timings, context) {
     + " bg " + (Number(c.background) || 0)
     + " queued " + (Number(c.queued) || 0)
     + " " + (String(c.priority || "") || "normal")
+    // Which app's quota paid for it; the two transports log in one stream.
+    + (c.app ? " " + String(c.app) : "")
 }
 
 var LIBRARY_FILTER_MODES = ["all", "playlist", "artist", "album", "show"]

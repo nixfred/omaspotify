@@ -38,9 +38,20 @@ Item {
   property int maxBytes: 33554432
   property int itemLimit: 10000
   property int staleMs: 300000
-  property int recheckMs: 3600000
+  // Opening a list checks its version itself after five minutes, and the
+  // library listing names a changed version within six hours, so asking
+  // Spotify about every held list more often than daily only spends quota.
+  property int recheckMs: 86400000
   property int maxAgeMs: 604800000
   property int spacingMs: 3000
+  // A list Spotify will not show this app (403, or an empty answer for a list
+  // the account neither owns nor collaborates on) stays that way; asking again
+  // each hour cost two requests per list for nothing. A changed Client ID
+  // forgets these at once.
+  property int refusedRetryMs: 604800000
+  // Spotify's daily quota, as opposed to its rolling rate limit. Its reply
+  // does not always carry a Retry-After, so wait a good part of the day.
+  property int quotaPauseMs: 21600000
   property double nextAt: 0
   property double suspendedUntil: 0
   property bool budgetFull: false
@@ -277,7 +288,14 @@ Item {
       checked[id] = [Math.floor(Number(entries[id].updatedAt) || 0), data.verified !== false,
         String(data.item.snapshotId || ""), data.items.length]
     }
-    checksRaw = JSON.stringify({ version: 1, owner: owner, checked: checked })
+    // Lists this app may not read are remembered too, so a restart does not
+    // ask Spotify about every one of them again. Short waits are not worth a line.
+    var refused = ({})
+    for (var refusedId in retryAt)
+      if (retryAt[refusedId] - now() > 3600000)
+        refused[refusedId] = Math.floor(retryAt[refusedId])
+    checksRaw = JSON.stringify({ version: 1, owner: owner, checked: checked,
+      refused: refused })
     return checksRaw
   }
 
@@ -293,6 +311,12 @@ Item {
     var checks = Api.parseJson(checksRaw, ({}))
     var checked = checks && checks.version === 1 && checks.owner === owner && checks.checked
       ? checks.checked : ({})
+    var refused = checks && checks.version === 1 && checks.owner === owner && checks.refused
+      ? checks.refused : ({})
+    var waits = ({})
+    for (var refusedId in refused)
+      if (Number(refused[refusedId]) > now()) waits[refusedId] = Number(refused[refusedId])
+    retryAt = waits
     var stored = record.entries || ({})
     restoring = true
     for (var id in stored) {
@@ -319,7 +343,8 @@ Item {
   }
 
   // Breadth first: all first pages before any deep paging, then round robin.
-  // Full pages are compared with snapshot_id at most once an hour (foreground freshness remains five minutes).
+  // Full pages are compared with snapshot_id at most once a day, or as soon as
+  // the library lists a different version (foreground freshness remains five minutes).
   // At the budget, lists already kept are still checked; new ones wait.
   function candidate() {
     var list = playlists || []
@@ -351,11 +376,17 @@ Item {
       root.handle = null
       root.nextAt = root.now() + root.spacingMs
       if (error) {
-        root.lastResult = "Cache request refused or failed (HTTP " + statusCode + ")"
+        var retryAfter = Api.responseRetryAfter(xhr)
+        var quota = statusCode === 429 && Api.quotaExceededPayload(payload)
+        root.lastResult = (quota ? "Spotify's daily quota for this app is spent"
+          : "Cache request refused or failed (HTTP " + statusCode + ")")
+          + (retryAfter ? ", retry after " + retryAfter + " s" : "")
         var id = root.work && root.work.item.id
-        if (id) root.retryAt[id] = root.now() + (statusCode === 403 || statusCode === 404 ? 3600000 : 300000)
+        if (id) root.retryAt[id] = root.now()
+          + (statusCode === 403 ? root.refusedRetryMs : statusCode === 404 ? 86400000 : 300000)
+        if (statusCode === 403) root.rechecked()
         if (statusCode === 429) root.suspendedUntil = root.now()
-          + Math.max(300000, Api.rateLimitRetryMs(Api.responseRetryAfter(xhr), 0))
+          + Math.max(quota ? root.quotaPauseMs : 300000, Api.rateLimitRetryMs(retryAfter, 0))
         root.work = null
         return
       }
@@ -406,9 +437,11 @@ Item {
         }
         if (!root.keep(data)) {
           // Hidden or over budget: either way, asking again soon changes nothing.
-          if (!data.items.length && root.hidesSongs(data.item))
+          var hidden = !data.items.length && root.hidesSongs(data.item)
+          if (hidden)
             root.lastResult = "Spotify hides the songs of playlists you neither own nor collaborate on, so those are not cached"
-          root.retryAt[id] = root.now() + 3600000
+          root.retryAt[id] = root.now() + (hidden ? root.refusedRetryMs : 3600000)
+          if (hidden) root.rechecked()
           root.work = null
           return
         }

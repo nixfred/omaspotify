@@ -4346,11 +4346,15 @@ Item {
     playbackPositionTick++
   }
 
+  // Every status poll that finds nothing playing lands here. The last play
+  // only changes when something was played, and the end of a play asks for
+  // it by itself below, so between those a copy is good for a long while:
+  // every thirty seconds was 900 requests a day from an idle panel.
   function loadResumeCandidate(force) {
     if (resumeCandidateLoading) return
     if (!authManager.loggedIn && !authManager.tokenIsFresh()) return
     if (force !== true && resumeCandidateLoadedAt > 0
-        && Date.now() - resumeCandidateLoadedAt < 30000) return
+        && Date.now() - resumeCandidateLoadedAt < Api.RESUME_CANDIDATE_FRESH_MS) return
     var expected = dataSerial
     resumeCandidateLoading = true
     resumeCandidateLoadedAt = Date.now()
@@ -4789,6 +4793,9 @@ Item {
   }
 
   onPlayingChanged: noteActivity()
+  // What just finished is the new candidate; the next idle poll must not
+  // offer the one before it.
+  onHasMediaChanged: if (!hasMedia && resumeCandidateLoadedAt > 0) loadResumeCandidate(true)
   onPlaybackStateChanged: sleepTimer.noteStopped(
     playbackState === MprisPlaybackState.Stopped)
   onCurrentUriChanged: sleepTimer.noteCurrentUriChanged(currentUri)

@@ -13,6 +13,7 @@ SpotifyTransport {
     sourceComponent: Component {
       SpotifyTransport {
         auth: root.fallbackAuth
+        appLabel: "catalog"
         now: root.now
         xhrFactory: root.xhrFactory
         activeTimeoutMs: root.activeTimeoutMs

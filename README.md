@@ -260,10 +260,12 @@ panel to let it work: it fills first pages before deeper pages, one request at a
 time, with at least three seconds between requests. It caches song lists and
 the address of each list's cover, not audio or artwork; accessible lists resume
 after restart. Spotify version checks skip unchanged lists; changed lists need a
-new download because Spotify has no incremental song-diff endpoint. A rate
-limit or quota refusal pauses warming for at least five minutes, or for as long
-as Spotify's `Retry-After` asks when that is longer; personal apps do not fall
-back to the shared app during warming.
+new download because Spotify has no incremental song-diff endpoint. A held list
+is checked once a day, or sooner when your playlist list names a new version. A
+rate limit pauses warming for at least five minutes, a spent daily quota for six
+hours, or for as long as Spotify's `Retry-After` asks when that is longer;
+personal apps do not fall back to the shared app during warming. A list Spotify
+will not show your app is left alone for a week, restarts included.
 After a restart it looks up your account by itself, without the panel being
 opened.
 
