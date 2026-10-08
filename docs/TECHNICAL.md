@@ -77,6 +77,19 @@ is capped at two of the four slots, spaced apart, and stands aside for three
 seconds after anything you open, so a page you are waiting on is never behind
 the crawl.
 
+Known foreign playlist metadata and item pages opened by the user go directly
+to the already-authorized catalog transport when a personal app is configured.
+New personal apps cannot read these playlists, and waiting for a 403 first
+fails when their playlist bucket instead returns `QUOTA_EXCEEDED`. Routing
+requires known account and owner IDs and excludes owned/collaborative playlists,
+unknown ownership, non-GET requests and account library endpoints. Pagination
+and snapshot checks retain the chosen catalog route. Without an authorized
+catalog session the existing personal path remains. Idle warming still never
+uses the catalog fallback. Failure messages preserve the redacted API reason;
+a development quota refusal is not presented as a short transient wait.
+`PlaylistCatalog.qml` executes both transports and checks routing, continuation,
+cache reuse, absent identities and quota messages with synthetic sessions.
+
 The shipped developer app is shared across installations, so a refusal can
 arrive without this user having sent much at all. Development-mode quota is
 counted per developer account. On a 429 the affected transport honours

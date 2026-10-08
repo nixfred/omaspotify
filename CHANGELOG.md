@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Opened foreign playlists use the already-authorized catalog app directly
+  when a personal app is configured. A personal app's exhausted playlist quota
+  no longer blocks a catalog read the shared app can complete. Owned and
+  collaborative playlists, account library reads and edits keep their existing
+  app; idle warming never switches to the shared app. Playlist failures display
+  the actual redacted error instead of generic advice to try again soon.
+
 - Starting a song on the displayed active receiver no longer waits for an
   unrelated playback-status refresh. Initial device discovery still waits for
   its own short refresh, bounded to two seconds without rate-limit retries,

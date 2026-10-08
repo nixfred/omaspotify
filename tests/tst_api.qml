@@ -1421,14 +1421,35 @@ TestCase {
       Api.playlistItemsHiddenMessage())
     compare(Api.playlistItemsEmptyMessage(own, 0,
       "API rate limit exceeded. Try again in 10 seconds.", 429, "user-1"),
-      "Couldn't load this playlist. Try again in a moment.")
+      "API rate limit exceeded. Try again in 10 seconds.")
     compare(Api.playlistItemsEmptyMessage(own, 0,
       "API rate limit exceeded. Try again in 10 seconds.", 429, "user-1", true),
       Api.sharedClientRateLimitMessage())
     compare(Api.playlistItemsEmptyMessage(own, 0, "Server error", 500,
-      "user-1", true), "Couldn't load this playlist. Try again in a moment.")
+      "user-1", true), "Server error")
     compare(Api.playlistItemsEmptyMessage(followed, 0, "", 200, ""),
       "This playlist has no visible items.")
+  }
+
+  function test_playlistReadRoute_requiresKnownForeignPlaylistAndReadPath() {
+    compare(Api.playlistReadId("GET", "/playlists/foreign/items"), "foreign")
+    compare(Api.playlistReadId("GET", Api.API_BASE + "/playlists/foreign/items?offset=50"), "foreign")
+    compare(Api.playlistReadId("GET", "/playlists/foreign"), "foreign")
+    compare(Api.playlistReadId("GET", "/me/playlists"), "")
+    compare(Api.playlistReadId("POST", "/playlists/foreign/items"), "")
+    compare(Api.playlistReadId("GET", "https://elsewhere.test/playlists/foreign/items"), "")
+    verify(Api.playlistNeedsCatalogRead({ ownerId: "other" }, "me"))
+    verify(!Api.playlistNeedsCatalogRead({ ownerId: "me" }, "me"))
+    verify(!Api.playlistNeedsCatalogRead({ ownerId: "other", collaborative: true }, "me"))
+    verify(!Api.playlistNeedsCatalogRead({ ownerId: "other" }, ""))
+    verify(!Api.playlistNeedsCatalogRead({}, "me"))
+  }
+
+  function test_playlistFailure_exposesQuotaReasonWithoutSecrets() {
+    var quota = "This Spotify app has exhausted its developer quota. Check the app configuration or use another authorized client."
+    compare(Api.playlistItemsEmptyMessage({ ownerId: "me" }, 0, quota, 429, "me"), quota)
+    compare(Api.playlistItemsEmptyMessage({ ownerId: "other" }, 0, quota, 429, "me"), quota)
+    compare(Api.playlistItemsEmptyMessage({ ownerId: "me" }, 0, "access_token=secret", 500, "me"), "access_token=<redacted>")
   }
 
   function test_responsiveMediaRowsAndSearchColumnsUseMeasuredWidth() {

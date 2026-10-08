@@ -1643,10 +1643,24 @@ Item {
   // network request; the explicit refresh control can still force one.
   // An empty page goes ahead of the queue. A cached page is already readable,
   // so its refresh uses the same pacing and recovery pause as library work.
+  function playlistReadUsesCatalog(method, path) {
+    if (!usingPersonalClientId || !spotifyApi.fallbackAuth
+        || spotifyApi.fallbackAuth.loggedIn !== true) return false
+    var id = Api.playlistReadId(method, path)
+    if (!id) return false
+    var playlist = playlistById(id)
+    if (!playlist && selectedPlaylist && String(selectedPlaylist.id) === id)
+      playlist = selectedPlaylist
+    if (!playlist && detailItem && detailItem.type === "playlist"
+        && String(detailItem.id) === id) playlist = detailItem
+    return Api.playlistNeedsCatalogRead(playlist, currentUserId)
+  }
+
   function pageRequest(method, path, query, callback, revalidating) {
     return spotifyApi.request(method, path, query, null, callback,
       { priority: revalidating === true ? "revalidate" : "interactive",
-        timeoutMs: Api.API_FOREGROUND_TIMEOUT_MS })
+        timeoutMs: Api.API_FOREGROUND_TIMEOUT_MS,
+        shared: playlistReadUsesCatalog(method, path) })
   }
 
   function openView(view, force) {
@@ -3312,7 +3326,7 @@ Item {
     var type = String(parent.type || "")
     if (type === "artist") return
     detailLoading = true
-    spotifyApi.request("GET", path, null, null, function(status, payload, error) {
+    pageRequest("GET", path, null, function(status, payload, error) {
       if (serial !== root.detailSerial) return
       root.detailLoading = false
       if (error) {

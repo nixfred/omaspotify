@@ -206,3 +206,18 @@ if rg -i 'ReferenceError|TypeError|binding loop|Cannot assign|Unable to assign' 
   exit 1
 fi
 echo 'Quickshell playback dispatch checks passed.'
+
+cp "$source_root/tests/integration/PlaylistCatalog.qml" "$test_root/app/shell.qml"
+env PATH="$test_root/identity-bin:$PATH" QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic NO_AT_BRIDGE=1 XDG_STATE_HOME="$test_root/catalog-state" \
+  timeout 15s dbus-run-session -- qs --no-color -p "$test_root/app" > "$test_root/catalog-output" 2>&1 || {
+  cat "$test_root/catalog-output"
+  exit 1
+}
+rg -q PLAYLIST_CATALOG_PASS "$test_root/catalog-output" || {
+  cat "$test_root/catalog-output"
+  exit 1
+}
+if rg -i 'ReferenceError|TypeError|binding loop|Cannot assign|Unable to assign|Failed to load configuration' "$test_root/catalog-output"; then
+  exit 1
+fi
+echo 'Quickshell playlist catalog routing checks passed.'

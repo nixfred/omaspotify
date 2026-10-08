@@ -457,6 +457,20 @@ function playlistOwnedByUser(playlist, userId) {
   return !!playlist && !!user && String(playlist.ownerId || "") === user
 }
 
+// Foreign playlist reads belong to the authorized catalog app: newer personal
+// apps cannot read them. Choose that app before spending the personal quota.
+function playlistReadId(method, path) {
+  if (String(method || "GET").toUpperCase() !== "GET" || !safeApiUrl(path)) return ""
+  var match = apiRequestPath(path).split("?")[0].match(/^\/playlists\/([^/]+)(?:\/items)?$/)
+  if (!match) return ""
+  try { return decodeURIComponent(match[1]) } catch (e) { return "" }
+}
+
+function playlistNeedsCatalogRead(playlist, userId) {
+  return !!playlist && !!String(playlist.ownerId || "") && !!String(userId || "")
+    && playlist.collaborative !== true && !playlistOwnedByUser(playlist, userId)
+}
+
 function playlistItemsHiddenByApi(status, owned, collaborative, knownUser) {
   if (owned === true || collaborative === true || knownUser !== true) return false
   var code = Number(status) || 0
@@ -483,7 +497,8 @@ function playlistItemsEmptyMessage(playlist, itemCount, error, status, userId,
       return playlistItemsHiddenMessage()
     if (Number(status) === 429 && sharedClient === true)
       return sharedClientRateLimitMessage()
-    return "Couldn't load this playlist. Try again in a moment."
+    return typeof error === "string" && error.trim()
+      ? redact(error.trim()) : "Couldn't load this playlist. Try again in a moment."
   }
   if (count > 0) return ""
   if (playlistItemsHiddenByApi(200, owned, collaborative, knownUser))
