@@ -137,6 +137,10 @@ pub async fn start(config: BackendConfig, state: StateStore) -> Result<EngineRun
     let (current_spirc_tx, current_spirc_rx) = watch::channel(Some(Arc::clone(&spirc)));
     // Catalog reads borrow whichever session is current; a reconnect swaps it.
     let (current_session_tx, current_session_rx) = watch::channel(session.clone());
+    tokio::spawn(crate::cluster::watch(
+        current_session_rx.clone(),
+        state.clone(),
+    ));
     let (track_list_tx, track_list_rx) = watch::channel(Vec::new());
     tokio::spawn(run_commands(
         command_rx,

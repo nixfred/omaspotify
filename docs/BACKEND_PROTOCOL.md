@@ -32,7 +32,13 @@ The abbreviated example omits the remaining state fields. A real snapshot also
 contains backend and protocol versions, session status, current client,
 playback status, track metadata, position in milliseconds, native 16-bit
 Connect volume, shuffle/repeat state, a monotonically increasing generation,
-and a redacted error string. When the error needs dedicated UI, the snapshot
+and a redacted error string. When the account's Connect session is held by
+some device, the snapshot also carries `session_holder`: `this computer`, or
+the other device's name and kind as Spotify lists it (for example
+`Kitchen (speaker, Sonos One)`); it is omitted while no device is active.
+Spotify allows one active device per account, so a song that stops with
+"device became inactive" was taken over by the device named here, and the
+backend logs the same line. When the error needs dedicated UI, the snapshot
 also includes an optional stable `error_code`; `audio_key_unavailable` means
 Spotify refused the key required for local playback.
 

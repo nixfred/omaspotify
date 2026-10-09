@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The backend names the device that holds the account's Connect session.
+  Spotify allows one active device per account, and librespot logs only
+  "device became inactive" when another one takes it; the backend now follows
+  the same cluster stream, logs "Connect session: Kitchen (speaker, Sonos
+  One)" whenever the holder changes, and publishes it as `session_holder` in
+  the state snapshot (`this computer`, the other device, or omitted while no
+  device is active). A song that stops is then never a mystery.
+
 - Playlists are read through the local player while it runs. The backend
   gained a `playlist_items` command that lists a playlist through its Connect
   session and describes the songs with one batched metadata request per

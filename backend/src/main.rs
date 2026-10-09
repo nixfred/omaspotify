@@ -1,4 +1,5 @@
 mod catalog;
+mod cluster;
 mod config;
 mod engine;
 mod fade;

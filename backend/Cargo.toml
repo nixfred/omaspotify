@@ -11,6 +11,7 @@ anyhow = "1.0"
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive"] }
 env_logger = { version = "0.11", default-features = false }
+futures-util = "0.3"
 hex = "0.4"
 librespot-connect = { git = "https://github.com/stappmus/librespot", rev = "6d3ecd76115c08a5e606d6f6d2181932314afed2", default-features = false }
 librespot-core = { git = "https://github.com/stappmus/librespot", rev = "6d3ecd76115c08a5e606d6f6d2181932314afed2", default-features = false, features = ["native-tls"] }

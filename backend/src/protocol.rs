@@ -126,6 +126,10 @@ pub struct BackendState {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub error_code: String,
     pub error: String,
+    /// Who holds the account's Connect session, as a person would name it:
+    /// "this computer", another device's name and kind, or empty for nobody.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub session_holder: String,
     #[serde(skip)]
     pub seek_sequence: u64,
 }
@@ -149,6 +153,7 @@ impl Default for BackendState {
             generation: 0,
             error_code: String::new(),
             error: String::new(),
+            session_holder: String::new(),
             seek_sequence: 0,
         }
     }
